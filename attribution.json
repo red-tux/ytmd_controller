@@ -1,9 +1,11 @@
 {
     "generic": {
-        "copyright": "",
-        "original-url": "",
-        "license": "",
-        "license-url": "",
-        "description": ""
+        "copyright": "Copyright (c) 2026 Andrew Nelson",
+        "original-url": "https://github.com/red-tux/ytmd_controller",
+        "license": "MIT",
+        "licence": "MIT",
+        "license-url": "https://github.com/red-tux/ytmd_controller/blob/main/LICENSE",
+        "licence-url": "https://github.com/red-tux/ytmd_controller/blob/main/LICENSE",
+        "description": "YTMDesktop Controller plugin source code."
     }
 }

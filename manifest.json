@@ -1,6 +1,12 @@
 {
-    "version": "",
-    "thumbnail": "",
-    "id": "",
-    "name": ""
+    "id": "net_red-tux_ytmd_controller",
+    "name": "YTMDesktop Controller",
+    "version": "0.1.0",
+    "app-version": "1.5.0",
+    "minimum-app-version": "1.5.0",
+    "github": "https://github.com/red-tux/ytmd_controller",
+    "description": "Control YouTube Music Desktop from your Stream Deck: play/pause, track navigation, volume, shuffle/repeat, and like/dislike, with live now-playing art and a fully configurable dial.",
+    "short-description": "Stream Deck control for YouTube Music Desktop.",
+    "tags": ["Media", "Music"],
+    "thumbnail": "assets/thumbnail.png"
 }

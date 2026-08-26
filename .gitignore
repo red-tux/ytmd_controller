@@ -160,3 +160,6 @@ cython_debug/
 #.idea/
 
 VERSION
+
+# Runtime thumbnail cache (see actions/common/ytmd_action_base.py)
+/cache/
