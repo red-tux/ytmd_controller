@@ -5,7 +5,11 @@ from src.backend.PluginManager.EventAssigner import EventAssigner
 from src.backend.DeckManagement.InputIdentifier import Input
 from GtkHelper.GenerativeUI.ComboRow import ComboRow
 
-from ..common.ytmd_action_base import YTMDActionMixin, paste_material_icon
+from ..common.ytmd_action_base import (
+    YTMDActionMixin,
+    ICON_THUMB_UP, ICON_THUMB_DOWN,
+    COLOR_LIKE, COLOR_DISLIKE, COLOR_NEUTRAL,
+)
 
 # YTMD's likeStatus: a real, reliable field (unlike shuffle) - see
 # https://github.com/XeroxDev/ytmdesktop-ts-companion/blob/main/src/enums/like-status.ts
@@ -14,10 +18,6 @@ LIKE_INDIFFERENT = 1
 LIKE_LIKE = 2
 
 ICON_CHOICES = ["both", "up", "down"]
-
-NEUTRAL_COLOR = (120, 120, 120, 255)
-LIKE_ACTIVE_COLOR = (0, 200, 83, 255)
-DISLIKE_ACTIVE_COLOR = (220, 53, 69, 255)
 
 
 class ThumbsRating(YTMDActionMixin, KeyAction):
@@ -93,17 +93,17 @@ class ThumbsRating(YTMDActionMixin, KeyAction):
         width, height = self.get_display_size()
         image = Image.new("RGBA", (width, height), (0, 0, 0, 0))
 
-        up_color = LIKE_ACTIVE_COLOR if like_status == LIKE_LIKE else NEUTRAL_COLOR
-        down_color = DISLIKE_ACTIVE_COLOR if like_status == LIKE_DISLIKE else NEUTRAL_COLOR
+        up_color_key = COLOR_LIKE if like_status == LIKE_LIKE else COLOR_NEUTRAL
+        down_color_key = COLOR_DISLIKE if like_status == LIKE_DISLIKE else COLOR_NEUTRAL
 
         mode = self.icon_display_row.get_value(fallback="both")
         if mode == "both":
             half = height // 2
-            paste_material_icon(image, "thumb_up", (0, 0, width, half), up_color)
-            paste_material_icon(image, "thumb_down", (0, half, width, height), down_color)
+            self.paste_asset_icon(image, ICON_THUMB_UP, up_color_key, (0, 0, width, half))
+            self.paste_asset_icon(image, ICON_THUMB_DOWN, down_color_key, (0, half, width, height))
         elif mode == "up":
-            paste_material_icon(image, "thumb_up", (0, 0, width, height), up_color)
+            self.paste_asset_icon(image, ICON_THUMB_UP, up_color_key, (0, 0, width, height))
         else:
-            paste_material_icon(image, "thumb_down", (0, 0, width, height), down_color)
+            self.paste_asset_icon(image, ICON_THUMB_DOWN, down_color_key, (0, 0, width, height))
 
         self.ui(self.set_media, image=image, size=1.0)

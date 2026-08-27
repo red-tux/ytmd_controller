@@ -33,6 +33,10 @@ Root cause, confirmed independent of any StreamController or plugin code: the pi
   This is now wired into the parent repo's `.devcontainer/devcontainer.json` `postCreateCommand`, so a fresh container rebuild picks it up automatically. If Pillow's version pin in the parent repo's `requirements.txt` ever changes, that `postCreateCommand` line needs its version bumped to match (it's a plain string pin, not auto-derived).
   - `LD_PRELOAD`-ing the system libfreetype over PIL's bundled one does *not* work (produces different garbage) — the fix has to be an actual rebuild/relink, not a runtime override.
 
+### Observed StreamController core bugs (documented, not fixed)
+
+See `docs/observed-core-bugs.md` for three bugs found in the parent app's core while building this plugin: SVG icon assets rasterize squashed (non-square) due to a missing argument in `MediaManager.generate_svg_thumbnail()`; `Observer.notify()` produces a harmless-but-noisy `RuntimeWarning` on every asset registration because it schedules a coroutine onto an asyncio loop that GLib never drives; and the Sidebar's action-list row breaks (shows raw markup text) if an action's `action_name` contains `&`/`<`/`>`, because `ActionManager.py` interpolates it into a Pango markup string unescaped. All three are worked around or avoided on the plugin side, none fixed in core — that file has the reproductions and proposed fixes for a future session.
+
 ## Current state
 
 This repo is still the stock `PluginTemplate` scaffold (StreamController's plugin starter), not yet YTMD-specific:

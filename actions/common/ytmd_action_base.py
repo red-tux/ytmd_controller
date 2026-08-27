@@ -3,12 +3,8 @@
 Mixed in ahead of KeyAction/DialAction, e.g. `class PlayPause(YTMDActionMixin, KeyAction): ...`
 Plain mixin (no __init__) so it doesn't disturb the KeyAction/DialAction/ActionCore MRO.
 """
-import functools
-import io
-import os
 from typing import Callable
 
-import cairosvg
 from loguru import logger as log
 from PIL import Image
 from gi.repository import GLib
@@ -21,52 +17,70 @@ from GtkHelper.GenerativeUI.ColorButtonRow import ColorButtonRow
 LABEL_CHOICES = ["none", "title", "artist"]
 DEFAULT_PROGRESS_COLOR = (255, 0, 0, 255)
 
-PAUSE_OVERLAY_DIM_COLOR = (0, 0, 0, 140)
-PAUSE_ICON_COLOR = (255, 255, 255, 255)
+# Icon/Color asset keys, registered once in main.py via PluginBase.add_icon()/add_color() and
+# read by the rendering helpers below. Centralized here (rather than as string literals at
+# each call site) so the registration site and every render call site are guaranteed to agree
+# on the exact key, and so main.py doesn't need to duplicate them.
+#
+# Each is independently user-overridable through this plugin's own Settings dialog: the Assets
+# tab replaces an icon's shape/file, the Colors tab replaces a tint - see
+# src/backend/PluginManager/PluginSettings/ in the parent StreamController checkout for how
+# that system works. We still apply the Color ourselves on render (see paste_asset_icon below);
+# the framework has no concept of "tint this icon based on live state" built in.
+ICON_SHUFFLE = "shuffle_icon"
+ICON_REPEAT = "repeat_icon"
+ICON_REPEAT_ONE = "repeat_one_icon"
+ICON_THUMB_UP = "thumb_up_icon"
+ICON_THUMB_DOWN = "thumb_down_icon"
+ICON_VOLUME_UP = "volume_up_icon"
+ICON_VOLUME_DOWN = "volume_down_icon"
+ICON_PAUSE = "pause_icon"
 
-# Bundled Material Icons glyphs (Google, Apache-2.0 - see attribution.json) as source SVGs, so
-# they rasterize crisply at whatever pixel size the actual deck hardware needs.
-_MATERIAL_ICONS_DIR = os.path.join(
-    os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))),
-    "assets", "icons", "material",
-)
+COLOR_SHUFFLE = "shuffle_color"
+COLOR_REPEAT_ON = "repeat_on_color"
+COLOR_REPEAT_OFF = "repeat_off_color"
+COLOR_LIKE = "like_color"
+COLOR_DISLIKE = "dislike_color"
+COLOR_NEUTRAL = "neutral_color"
+COLOR_VOLUME_UP = "volume_up_color"
+COLOR_VOLUME_DOWN = "volume_down_color"
+COLOR_PAUSE_ICON = "pause_icon_color"
+COLOR_PAUSE_DIM = "pause_dim_color"
 
+# Filenames are relative to assets/icons/material/ (the plugin's bundled Material Icons - see
+# assets/icons/material/NOTICE.md for attribution). main.py registers these as the default
+# Icon asset for each key above via PluginBase.add_icon().
+#
+# Pre-rendered PNGs, not the .svg sources directly: StreamController's own SVG loading path
+# (MediaManager.generate_svg_thumbnail -> HelperMethods.svg_to_pil) calls
+# `svg_to_pil(path, 1024)` - only the width positional arg, so height stays at that function's
+# default of 96, rasterizing every SVG icon asset into a squashed 1024x96 canvas. Registering
+# our own correctly-square 512x512 PNGs (rendered once from the same .svg files, kept alongside
+# them) sidesteps that core bug entirely via the framework's plain-raster-image path instead.
+ICON_ASSET_DEFAULTS = {
+    ICON_SHUFFLE: "shuffle.png",
+    ICON_REPEAT: "repeat.png",
+    ICON_REPEAT_ONE: "repeat_one.png",
+    ICON_THUMB_UP: "thumb_up.png",
+    ICON_THUMB_DOWN: "thumb_down.png",
+    ICON_VOLUME_UP: "volume_up.png",
+    ICON_VOLUME_DOWN: "volume_down.png",
+    ICON_PAUSE: "pause.png",
+}
 
-@functools.lru_cache(maxsize=64)
-def _rasterize_material_icon(name: str, size: int) -> Image.Image:
-    svg_path = os.path.join(_MATERIAL_ICONS_DIR, f"{name}.svg")
-    png_bytes = cairosvg.svg2png(url=svg_path, output_width=size, output_height=size)
-    return Image.open(io.BytesIO(png_bytes)).convert("RGBA")
-
-
-def load_material_icon(name: str, size: int, color: tuple[int, int, int, int]) -> Image.Image:
-    """Loads a bundled Material Icons glyph (assets/icons/material/<name>.svg), rasterized at
-    `size` px and recolored to `color` - the glyph's own alpha is used as a mask, so the same
-    rasterized shape can be recolored for any on/off/active state without re-rendering the SVG."""
-    base = _rasterize_material_icon(name, size)
-    r, g, b, a = color
-    colored = Image.new("RGBA", base.size, (r, g, b, 0))
-    alpha = base.getchannel("A")
-    if a != 255:
-        alpha = alpha.point(lambda v: v * a // 255)
-    colored.putalpha(alpha)
-    return colored
-
-
-def paste_material_icon(
-    canvas: Image.Image, name: str, box: tuple[float, float, float, float],
-    color: tuple[int, int, int, int], margin_fraction: float = 0.15,
-) -> None:
-    """Pastes a bundled Material Icons glyph, square and centered with a margin, into `box`
-    (x0, y0, x1, y1) on `canvas`."""
-    x0, y0, x1, y1 = box
-    w, h = x1 - x0, y1 - y0
-    size = round(min(w, h) * (1 - margin_fraction * 2))
-    if size <= 0:
-        return
-    icon = load_material_icon(name, size, color)
-    px, py = round(x0 + (w - size) / 2), round(y0 + (h - size) / 2)
-    canvas.paste(icon, (px, py), icon)
+# main.py registers these as the default Color asset for each key above via PluginBase.add_color().
+COLOR_ASSET_DEFAULTS = {
+    COLOR_SHUFFLE: (200, 200, 200, 255),
+    COLOR_REPEAT_ON: (0, 200, 83, 255),
+    COLOR_REPEAT_OFF: (120, 120, 120, 255),
+    COLOR_LIKE: (0, 200, 83, 255),
+    COLOR_DISLIKE: (220, 53, 69, 255),
+    COLOR_NEUTRAL: (120, 120, 120, 255),
+    COLOR_VOLUME_UP: (0, 200, 83, 255),
+    COLOR_VOLUME_DOWN: (220, 53, 69, 255),
+    COLOR_PAUSE_ICON: (255, 255, 255, 255),
+    COLOR_PAUSE_DIM: (0, 0, 0, 140),
+}
 
 
 class YTMDActionMixin:
@@ -250,6 +264,52 @@ class YTMDActionMixin:
         draw.rectangle([0, height - bar_height, fill_width, height], fill=(*rgb, opacity))
         return bar_height
 
+    # --- icon/color assets (Settings > Assets/Colors - see the constants above) ---------------
+
+    def get_asset_icon_image(self, icon_key: str, size: int) -> Image.Image | None:
+        """Rasterized image for an Icon asset, resized to `size`x`size`. Only its alpha channel
+        matters to callers (see paste_asset_icon) - whatever shape the user has picked for this
+        key, via this plugin's Settings > Assets tab, gets recolored the same way our bundled
+        default does."""
+        values = self.plugin_base.asset_manager.icons.get_asset_values(icon_key)
+        if not values:
+            return None
+        _, rendered = values
+        if rendered is None:
+            return None
+        return rendered.resize((size, size), Image.Resampling.LANCZOS).convert("RGBA")
+
+    def get_asset_color(self, color_key: str, fallback: tuple[int, int, int, int] = (255, 255, 255, 255)) -> tuple[int, int, int, int]:
+        """Color for a Color asset, user-overridable through this plugin's Settings > Colors
+        tab. `fallback` is only a last resort - every key above is always registered with a
+        default in main.py, so this should never actually be hit in practice."""
+        color = self.plugin_base.asset_manager.colors.get_asset_values(color_key)
+        return color if color is not None else fallback
+
+    def paste_asset_icon(
+        self, canvas: Image.Image, icon_key: str, color_key: str,
+        box: tuple[float, float, float, float], margin_fraction: float = 0.15,
+    ) -> None:
+        """Pastes an Icon asset, square and centered with a margin, into `box` (x0, y0, x1, y1)
+        on `canvas`, tinted with a Color asset - the icon's own alpha is used as a mask, so any
+        shape the user swaps in gets recolored the same way our bundled Material Icons do."""
+        x0, y0, x1, y1 = box
+        w, h = x1 - x0, y1 - y0
+        size = round(min(w, h) * (1 - margin_fraction * 2))
+        if size <= 0:
+            return
+        base = self.get_asset_icon_image(icon_key, size)
+        if base is None:
+            return
+        r, g, b, a = self.get_asset_color(color_key)
+        colored = Image.new("RGBA", base.size, (r, g, b, 0))
+        alpha = base.getchannel("A")
+        if a != 255:
+            alpha = alpha.point(lambda v: v * a // 255)
+        colored.putalpha(alpha)
+        px, py = round(x0 + (w - size) / 2), round(y0 + (h - size) / 2)
+        canvas.paste(colored, (px, py), colored)
+
     def apply_pause_overlay(self, image: Image.Image) -> Image.Image:
         """If playback is currently paused (per the shared PlaybackState singleton - see
         internal/playback_state.py), returns a dimmed copy of `image` with a centered pause
@@ -258,9 +318,10 @@ class YTMDActionMixin:
         if not self.plugin_base.playback_state.is_paused():
             return image
         width, height = image.size
-        dimmed = Image.alpha_composite(image, Image.new("RGBA", (width, height), PAUSE_OVERLAY_DIM_COLOR))
+        dim_color = self.get_asset_color(COLOR_PAUSE_DIM, COLOR_ASSET_DEFAULTS[COLOR_PAUSE_DIM])
+        dimmed = Image.alpha_composite(image, Image.new("RGBA", (width, height), dim_color))
         overlay = Image.new("RGBA", (width, height), (0, 0, 0, 0))
-        paste_material_icon(overlay, "pause", (0, 0, width, height), PAUSE_ICON_COLOR, margin_fraction=0.3)
+        self.paste_asset_icon(overlay, ICON_PAUSE, COLOR_PAUSE_ICON, (0, 0, width, height), margin_fraction=0.3)
         return Image.alpha_composite(dimmed, overlay)
 
     @staticmethod

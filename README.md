@@ -167,6 +167,11 @@ Like/Dislike only ever move you *into* that state (pressing Like when already li
 
 Unlike shuffle, YTMD does report the current rating, so Like/Dislike are true "set to this state" functions (pressing Like when already liked does nothing, rather than un-liking it), and the icon reflects the real rating: gray = neutral, green thumb = liked, red thumb = disliked. Set Icon Display to `up` or `down` to use this action as a dedicated like-only or dislike-only key.
 
-## Notes
+## Customizing icons and colors
 
-- Shuffle/repeat, thumbs up/down, and volume up/down icons are Google's [Material Icons](https://github.com/google/material-design-icons) (Apache License 2.0), bundled as SVGs under `assets/icons/material/` and recolored per state at render time — see `assets/icons/material/NOTICE.md` for attribution.
+Every icon this plugin draws (shuffle, repeat, thumbs up/down, volume up/down, pause) defaults to Google's [Material Icons](https://github.com/google/material-design-icons) (Apache License 2.0, bundled as SVGs under `assets/icons/material/` — see `assets/icons/material/NOTICE.md` for attribution), but both the shape and the color are independently customizable through StreamController's own **Assets** and **Colors** tabs in this plugin's settings dialog (next to the **Settings** tab covered above):
+
+- **Assets** — replace any icon's shape with your own image file.
+- **Colors** — repick the color each icon is tinted with (e.g. the "liked" green, the "disliked" red, repeat-on/off, the pause overlay's dim and icon color).
+
+Whichever shape you pick is always recolored using the matching color at render time (the same way the bundled defaults are) — so a custom icon works the same as the default, just with a different silhouette.

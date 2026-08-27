@@ -6,12 +6,13 @@ from src.backend.DeckManagement.InputIdentifier import Input
 from GtkHelper.GenerativeUI.SpinRow import SpinRow
 from GtkHelper.GenerativeUI.ComboRow import ComboRow
 
-from ..common.ytmd_action_base import YTMDActionMixin, paste_material_icon
+from ..common.ytmd_action_base import (
+    YTMDActionMixin,
+    ICON_VOLUME_UP, ICON_VOLUME_DOWN,
+    COLOR_VOLUME_UP, COLOR_VOLUME_DOWN,
+)
 
 ICON_CHOICES = ["both", "up", "down"]
-
-UP_COLOR = (0, 200, 83, 255)
-DOWN_COLOR = (220, 53, 69, 255)
 
 
 class VolumeStep(YTMDActionMixin, KeyAction):
@@ -99,11 +100,11 @@ class VolumeStep(YTMDActionMixin, KeyAction):
         mode = self.icon_display_row.get_value(fallback="both")
         if mode == "both":
             half = height // 2
-            paste_material_icon(image, "volume_up", (0, 0, width, half), UP_COLOR)
-            paste_material_icon(image, "volume_down", (0, half, width, height), DOWN_COLOR)
+            self.paste_asset_icon(image, ICON_VOLUME_UP, COLOR_VOLUME_UP, (0, 0, width, half))
+            self.paste_asset_icon(image, ICON_VOLUME_DOWN, COLOR_VOLUME_DOWN, (0, half, width, height))
         elif mode == "up":
-            paste_material_icon(image, "volume_up", (0, 0, width, height), UP_COLOR)
+            self.paste_asset_icon(image, ICON_VOLUME_UP, COLOR_VOLUME_UP, (0, 0, width, height))
         else:
-            paste_material_icon(image, "volume_down", (0, 0, width, height), DOWN_COLOR)
+            self.paste_asset_icon(image, ICON_VOLUME_DOWN, COLOR_VOLUME_DOWN, (0, 0, width, height))
 
         self.ui(self.set_media, image=image, size=1.0)

@@ -26,6 +26,7 @@ from .actions.VolumeStep.VolumeStep import VolumeStep
 from .actions.DialControl.DialControl import DialControl
 from .actions.ShuffleRepeat.ShuffleRepeat import ShuffleRepeat
 from .actions.ThumbsRating.ThumbsRating import ThumbsRating
+from .actions.common.ytmd_action_base import ICON_ASSET_DEFAULTS, COLOR_ASSET_DEFAULTS
 
 KEY_ONLY_SUPPORT = {
     Input.Key: ActionInputSupport.SUPPORTED,
@@ -62,6 +63,15 @@ class YTMDControllerPlugin(PluginBase):
         self.volume_state = VolumeState()
         # Same idea, for pause status - see internal/playback_state.py.
         self.playback_state = PlaybackState()
+
+        # Registers this plugin's icons/colors as user-customizable assets (Settings > Assets /
+        # Colors tabs). Safe to call every startup - PluginBase only applies these as the
+        # default; a user override (loaded from settings.json before this runs) always wins.
+        # See actions/common/ytmd_action_base.py for the keys and how they're rendered.
+        for key, filename in ICON_ASSET_DEFAULTS.items():
+            self.add_icon(key, os.path.join(self.PATH, "assets", "icons", "material", filename))
+        for key, rgba in COLOR_ASSET_DEFAULTS.items():
+            self.add_color(key, rgba)
 
         self.client = YTMDClient(
             host=settings.get("host", DEFAULT_HOST),
@@ -159,7 +169,7 @@ class YTMDControllerPlugin(PluginBase):
                 plugin_base=self,
                 action_base=ShuffleRepeat,
                 action_id_suffix="ShuffleRepeat",
-                action_name="Shuffle & Repeat",
+                action_name="Shuffle/Repeat",
                 action_support=KEY_ONLY_SUPPORT,
                 description=(
                     "Toggle Shuffle, Repeat On/Single/Off, and Cycle Repeat are separately "

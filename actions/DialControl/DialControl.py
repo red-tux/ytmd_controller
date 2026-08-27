@@ -10,7 +10,11 @@ from GtkHelper.GenerativeUI.SpinRow import SpinRow
 from GtkHelper.GenerativeUI.ColorButtonRow import ColorButtonRow
 from GtkHelper.GenerativeUI.SwitchRow import SwitchRow
 
-from ..common.ytmd_action_base import YTMDActionMixin, paste_material_icon
+from ..common.ytmd_action_base import (
+    YTMDActionMixin,
+    ICON_THUMB_UP, ICON_THUMB_DOWN,
+    COLOR_LIKE, COLOR_DISLIKE, COLOR_NEUTRAL,
+)
 
 STEP = 2
 # YTMD rate-limits /command; a fast spin of the dial fires one turn event per detent, so the
@@ -30,11 +34,6 @@ FALLBACK_SIZE = (200, 100)
 # video.likeStatus values reported by YTMD's /state.
 LIKE_DISLIKE = 0
 LIKE_LIKE = 2
-
-# Same colors as ThumbsRating's states, for a consistent look across the plugin.
-LIKE_FLASH_COLOR = (0, 200, 83, 255)
-DISLIKE_FLASH_COLOR = (220, 53, 69, 255)
-NEUTRAL_FLASH_COLOR = (120, 120, 120, 255)
 
 
 class DialControl(YTMDActionMixin, DialAction):
@@ -264,27 +263,27 @@ class DialControl(YTMDActionMixin, DialAction):
         like_status = self.get_video(self._latest_state or {}).get("likeStatus")
         if like_status != LIKE_LIKE:
             self.send_command("toggleLike")
-        self._flash_thumb("thumb_up", LIKE_FLASH_COLOR)
+        self._flash_thumb(ICON_THUMB_UP, COLOR_LIKE)
 
     def _do_dislike(self, data=None) -> None:
         like_status = self.get_video(self._latest_state or {}).get("likeStatus")
         if like_status != LIKE_DISLIKE:
             self.send_command("toggleDislike")
-        self._flash_thumb("thumb_down", DISLIKE_FLASH_COLOR)
+        self._flash_thumb(ICON_THUMB_DOWN, COLOR_DISLIKE)
 
     def _do_toggle_like(self, data=None) -> None:
         # Unlike Like above, this is the raw toggle - if already liked, this un-likes it
         # (back to indifferent) instead of leaving it liked.
         like_status = self.get_video(self._latest_state or {}).get("likeStatus")
         self.send_command("toggleLike")
-        color = NEUTRAL_FLASH_COLOR if like_status == LIKE_LIKE else LIKE_FLASH_COLOR
-        self._flash_thumb("thumb_up", color)
+        color_key = COLOR_NEUTRAL if like_status == LIKE_LIKE else COLOR_LIKE
+        self._flash_thumb(ICON_THUMB_UP, color_key)
 
     def _do_toggle_dislike(self, data=None) -> None:
         like_status = self.get_video(self._latest_state or {}).get("likeStatus")
         self.send_command("toggleDislike")
-        color = NEUTRAL_FLASH_COLOR if like_status == LIKE_DISLIKE else DISLIKE_FLASH_COLOR
-        self._flash_thumb("thumb_down", color)
+        color_key = COLOR_NEUTRAL if like_status == LIKE_DISLIKE else COLOR_DISLIKE
+        self._flash_thumb(ICON_THUMB_DOWN, color_key)
 
     def _adjust_volume(self, delta: int) -> None:
         # Adjusting volume always means "I want sound" - unmute rather than silently
@@ -341,8 +340,8 @@ class DialControl(YTMDActionMixin, DialAction):
 
     # --- like/dislike confirmation flash -------------------------------------------
 
-    def _flash_thumb(self, icon_name: str, color: tuple) -> None:
-        self._thumb_flash = (icon_name, color)
+    def _flash_thumb(self, icon_key: str, color_key: str) -> None:
+        self._thumb_flash = (icon_key, color_key)
         self._redraw()
 
         self._cancel_thumb_flash()
@@ -400,8 +399,8 @@ class DialControl(YTMDActionMixin, DialAction):
             draw.rectangle([bar_left, volume_area_height - fill_height, width, volume_area_height], fill=bar_color)
 
         if self._thumb_flash is not None:
-            icon_name, color = self._thumb_flash
-            paste_material_icon(overlay, icon_name, (0, 0, width, height), color)
+            icon_key, color_key = self._thumb_flash
+            self.paste_asset_icon(overlay, icon_key, color_key, (0, 0, width, height))
 
         image = Image.alpha_composite(image, overlay)
         image = self.apply_pause_overlay(image)

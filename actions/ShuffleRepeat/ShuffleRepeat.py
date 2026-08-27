@@ -4,7 +4,11 @@ from src.backend.PluginManager.InputBases import KeyAction
 from src.backend.PluginManager.EventAssigner import EventAssigner
 from src.backend.DeckManagement.InputIdentifier import Input
 
-from ..common.ytmd_action_base import YTMDActionMixin, paste_material_icon
+from ..common.ytmd_action_base import (
+    YTMDActionMixin,
+    ICON_SHUFFLE, ICON_REPEAT, ICON_REPEAT_ONE,
+    COLOR_SHUFFLE, COLOR_REPEAT_ON, COLOR_REPEAT_OFF,
+)
 
 # YTMD's repeatMode command: 0=off, 1=repeat whole queue, 2=repeat current track.
 # See https://github.com/XeroxDev/ytmdesktop-ts-companion/blob/main/src/enums/repeat-mode.ts
@@ -12,10 +16,6 @@ REPEAT_NONE = 0
 REPEAT_ALL = 1
 REPEAT_ONE = 2
 REPEAT_SEQUENCE = [REPEAT_NONE, REPEAT_ALL, REPEAT_ONE]
-
-SHUFFLE_COLOR = (200, 200, 200, 255)
-REPEAT_OFF_COLOR = (120, 120, 120, 255)
-REPEAT_ON_COLOR = (0, 200, 83, 255)
 
 
 class ShuffleRepeat(YTMDActionMixin, KeyAction):
@@ -86,10 +86,10 @@ class ShuffleRepeat(YTMDActionMixin, KeyAction):
         image = Image.new("RGBA", (width, height), (0, 0, 0, 0))
 
         half = height // 2
-        paste_material_icon(image, "shuffle", (0, 0, width, half), SHUFFLE_COLOR)
+        self.paste_asset_icon(image, ICON_SHUFFLE, COLOR_SHUFFLE, (0, 0, width, half))
 
-        repeat_color = REPEAT_ON_COLOR if repeat_mode in (REPEAT_ALL, REPEAT_ONE) else REPEAT_OFF_COLOR
-        repeat_icon = "repeat_one" if repeat_mode == REPEAT_ONE else "repeat"
-        paste_material_icon(image, repeat_icon, (0, half, width, height), repeat_color)
+        repeat_color_key = COLOR_REPEAT_ON if repeat_mode in (REPEAT_ALL, REPEAT_ONE) else COLOR_REPEAT_OFF
+        repeat_icon_key = ICON_REPEAT_ONE if repeat_mode == REPEAT_ONE else ICON_REPEAT
+        self.paste_asset_icon(image, repeat_icon_key, repeat_color_key, (0, half, width, height))
 
         self.ui(self.set_media, image=image, size=1.0)
