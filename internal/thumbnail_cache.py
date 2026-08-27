@@ -129,6 +129,43 @@ class ThumbnailCache:
         except OSError as e:
             log.error(f"Failed to prune thumbnail cache dir {cache_dir}: {e}")
 
+    def get_stats(self) -> tuple[int, int]:
+        """Returns (file_count, total_bytes) for the on-disk cache - for a settings UI, not
+        anything performance-sensitive, so no caching of the result."""
+        try:
+            entries = [os.path.join(self._cache_dir, name) for name in os.listdir(self._cache_dir)]
+        except OSError:
+            return 0, 0
+        entries = [p for p in entries if os.path.isfile(p)]
+        return len(entries), sum(os.path.getsize(p) for p in entries)
+
+    def purge(self) -> None:
+        """Deletes every cached thumbnail, in memory and on disk."""
+        with self._lock:
+            self._memory.clear()
+        if not os.path.isdir(self._cache_dir):
+            return
+        try:
+            for name in os.listdir(self._cache_dir):
+                path = os.path.join(self._cache_dir, name)
+                if os.path.isfile(path):
+                    os.remove(path)
+        except OSError as e:
+            log.error(f"Failed to purge thumbnail cache dir {self._cache_dir}: {e}")
+
+    def get_max_entries(self) -> int:
+        return self._max_entries
+
+    def set_max_entries(self, max_entries: int) -> None:
+        """Live-updates the cache size limit and immediately prunes down to it - no restart
+        needed, unlike settings actions read once at plugin startup."""
+        self._max_entries = max_entries
+        with self._lock:
+            while len(self._memory) > self._max_entries:
+                self._memory.popitem(last=False)
+        if os.path.isdir(self._cache_dir):
+            self._prune_disk(self._cache_dir, max_entries=self._max_entries)
+
     @staticmethod
     def _fetch_uncached(url: str) -> Image.Image | None:
         try:

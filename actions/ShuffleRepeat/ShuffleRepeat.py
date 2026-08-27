@@ -1,12 +1,10 @@
-import math
-
-from PIL import Image, ImageDraw, ImageFont
+from PIL import Image
 
 from src.backend.PluginManager.InputBases import KeyAction
 from src.backend.PluginManager.EventAssigner import EventAssigner
 from src.backend.DeckManagement.InputIdentifier import Input
 
-from ..common.ytmd_action_base import YTMDActionMixin
+from ..common.ytmd_action_base import YTMDActionMixin, paste_material_icon
 
 # YTMD's repeatMode command: 0=off, 1=repeat whole queue, 2=repeat current track.
 # See https://github.com/XeroxDev/ytmdesktop-ts-companion/blob/main/src/enums/repeat-mode.ts
@@ -86,49 +84,12 @@ class ShuffleRepeat(YTMDActionMixin, KeyAction):
     def _render(self, repeat_mode) -> None:
         width, height = self.get_display_size()
         image = Image.new("RGBA", (width, height), (0, 0, 0, 0))
-        draw = ImageDraw.Draw(image)
 
         half = height // 2
-        self._draw_shuffle_icon(draw, width, 0, half)
-        self._draw_repeat_icon(draw, width, half, height, repeat_mode)
+        paste_material_icon(image, "shuffle", (0, 0, width, half), SHUFFLE_COLOR)
+
+        repeat_color = REPEAT_ON_COLOR if repeat_mode in (REPEAT_ALL, REPEAT_ONE) else REPEAT_OFF_COLOR
+        repeat_icon = "repeat_one" if repeat_mode == REPEAT_ONE else "repeat"
+        paste_material_icon(image, repeat_icon, (0, half, width, height), repeat_color)
 
         self.ui(self.set_media, image=image, size=1.0)
-
-    # TODO: these are hand-drawn PIL primitives (lines/arcs), not real icon artwork - replace
-    # with proper shuffle/repeat glyphs (e.g. bundled SVG/PNG assets) when available.
-    @staticmethod
-    def _draw_shuffle_icon(draw: ImageDraw.ImageDraw, width: int, top: int, bottom: int) -> None:
-        margin_x = width * 0.22
-        margin_y = (bottom - top) * 0.25
-        x0, x1 = margin_x, width - margin_x
-        y0, y1 = top + margin_y, bottom - margin_y
-        line_width = max(2, round(width * 0.035))
-
-        draw.line([(x0, y0), (x1, y1)], fill=SHUFFLE_COLOR, width=line_width)
-        draw.line([(x0, y1), (x1, y0)], fill=SHUFFLE_COLOR, width=line_width)
-
-    @staticmethod
-    def _draw_repeat_icon(draw: ImageDraw.ImageDraw, width: int, top: int, bottom: int, repeat_mode) -> None:
-        margin_x = width * 0.25
-        margin_y = (bottom - top) * 0.15
-        x0, x1 = margin_x, width - margin_x
-        y0, y1 = top + margin_y, bottom - margin_y
-
-        color = REPEAT_ON_COLOR if repeat_mode in (REPEAT_ALL, REPEAT_ONE) else REPEAT_OFF_COLOR
-        line_width = max(2, round(width * 0.035))
-
-        draw.arc([x0, y0, x1, y1], start=20, end=340, fill=color, width=line_width)
-
-        # Arrowhead where the arc starts, so the loop reads as directional.
-        cx, cy = (x0 + x1) / 2, (y0 + y1) / 2
-        rx, ry = (x1 - x0) / 2, (y1 - y0) / 2
-        angle = math.radians(20)
-        tip = (cx + rx * math.cos(angle), cy + ry * math.sin(angle))
-        size = width * 0.07
-        draw.polygon(
-            [tip, (tip[0] - size, tip[1] - size * 0.6), (tip[0] - size * 0.2, tip[1] + size * 0.6)],
-            fill=color,
-        )
-
-        if repeat_mode == REPEAT_ONE:
-            draw.text((cx, cy), "1", fill=color, font=ImageFont.load_default(), anchor="mm")

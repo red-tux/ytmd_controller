@@ -3,8 +3,12 @@
 Mixed in ahead of KeyAction/DialAction, e.g. `class PlayPause(YTMDActionMixin, KeyAction): ...`
 Plain mixin (no __init__) so it doesn't disturb the KeyAction/DialAction/ActionCore MRO.
 """
+import functools
+import io
+import os
 from typing import Callable
 
+import cairosvg
 from loguru import logger as log
 from PIL import Image
 from gi.repository import GLib
@@ -16,6 +20,53 @@ from GtkHelper.GenerativeUI.ColorButtonRow import ColorButtonRow
 
 LABEL_CHOICES = ["none", "title", "artist"]
 DEFAULT_PROGRESS_COLOR = (255, 0, 0, 255)
+
+PAUSE_OVERLAY_DIM_COLOR = (0, 0, 0, 140)
+PAUSE_ICON_COLOR = (255, 255, 255, 255)
+
+# Bundled Material Icons glyphs (Google, Apache-2.0 - see attribution.json) as source SVGs, so
+# they rasterize crisply at whatever pixel size the actual deck hardware needs.
+_MATERIAL_ICONS_DIR = os.path.join(
+    os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))),
+    "assets", "icons", "material",
+)
+
+
+@functools.lru_cache(maxsize=64)
+def _rasterize_material_icon(name: str, size: int) -> Image.Image:
+    svg_path = os.path.join(_MATERIAL_ICONS_DIR, f"{name}.svg")
+    png_bytes = cairosvg.svg2png(url=svg_path, output_width=size, output_height=size)
+    return Image.open(io.BytesIO(png_bytes)).convert("RGBA")
+
+
+def load_material_icon(name: str, size: int, color: tuple[int, int, int, int]) -> Image.Image:
+    """Loads a bundled Material Icons glyph (assets/icons/material/<name>.svg), rasterized at
+    `size` px and recolored to `color` - the glyph's own alpha is used as a mask, so the same
+    rasterized shape can be recolored for any on/off/active state without re-rendering the SVG."""
+    base = _rasterize_material_icon(name, size)
+    r, g, b, a = color
+    colored = Image.new("RGBA", base.size, (r, g, b, 0))
+    alpha = base.getchannel("A")
+    if a != 255:
+        alpha = alpha.point(lambda v: v * a // 255)
+    colored.putalpha(alpha)
+    return colored
+
+
+def paste_material_icon(
+    canvas: Image.Image, name: str, box: tuple[float, float, float, float],
+    color: tuple[int, int, int, int], margin_fraction: float = 0.15,
+) -> None:
+    """Pastes a bundled Material Icons glyph, square and centered with a margin, into `box`
+    (x0, y0, x1, y1) on `canvas`."""
+    x0, y0, x1, y1 = box
+    w, h = x1 - x0, y1 - y0
+    size = round(min(w, h) * (1 - margin_fraction * 2))
+    if size <= 0:
+        return
+    icon = load_material_icon(name, size, color)
+    px, py = round(x0 + (w - size) / 2), round(y0 + (h - size) / 2)
+    canvas.paste(icon, (px, py), icon)
 
 
 class YTMDActionMixin:
@@ -139,11 +190,21 @@ class YTMDActionMixin:
 
     def render_chosen_labels(self, state: dict, force: bool = False) -> None:
         title, artist = self.format_title_artist(state)
+        self.render_labels(title, artist, force=force)
+
+    def render_labels(self, title: str, artist: str, force: bool = False) -> None:
+        """Same as render_chosen_labels, but for callers that already have a title/artist pair
+        not sourced from the live state's `video` object - e.g. a queue item being previewed."""
+        # No hardcoded fallback= here - GenerativeUI.get_value() returns that literal whenever
+        # the setting is unset, ignoring the row's own configured default_value. Callers set up
+        # these rows with different defaults (setup_label_rows()'s top/middle/bottom_default),
+        # so a hardcoded fallback here would silently override whichever caller didn't happen
+        # to match it (e.g. TrackStep defaults to none/none/title, not PlayPause's title/artist/none).
         values = {"title": title, "artist": artist, "none": ""}
         labels = (
-            values.get(self.top_label_row.get_value(fallback="title"), ""),
-            values.get(self.middle_label_row.get_value(fallback="artist"), ""),
-            values.get(self.bottom_label_row.get_value(fallback="none"), ""),
+            values.get(self.top_label_row.get_value(), ""),
+            values.get(self.middle_label_row.get_value(), ""),
+            values.get(self.bottom_label_row.get_value(), ""),
         )
         if not force and labels == self._last_rendered_labels:
             return
@@ -188,6 +249,19 @@ class YTMDActionMixin:
 
         draw.rectangle([0, height - bar_height, fill_width, height], fill=(*rgb, opacity))
         return bar_height
+
+    def apply_pause_overlay(self, image: Image.Image) -> Image.Image:
+        """If playback is currently paused (per the shared PlaybackState singleton - see
+        internal/playback_state.py), returns a dimmed copy of `image` with a centered pause
+        icon; otherwise returns `image` unchanged. The dim is needed for the icon to stay
+        legible over arbitrary album art, including light/white covers."""
+        if not self.plugin_base.playback_state.is_paused():
+            return image
+        width, height = image.size
+        dimmed = Image.alpha_composite(image, Image.new("RGBA", (width, height), PAUSE_OVERLAY_DIM_COLOR))
+        overlay = Image.new("RGBA", (width, height), (0, 0, 0, 0))
+        paste_material_icon(overlay, "pause", (0, 0, width, height), PAUSE_ICON_COLOR, margin_fraction=0.3)
+        return Image.alpha_composite(dimmed, overlay)
 
     @staticmethod
     def thumbnail_url(state: dict) -> str | None:

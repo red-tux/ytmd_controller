@@ -20,13 +20,16 @@ class TrackStep(YTMDActionMixin, KeyAction):
         super().__init__(*args, default_events=False, **kwargs)
 
         self._latest_state = None
-        self._last_label = None
         self._last_preview_key = None
 
         self.preview_row = ComboRow(
             self, "preview", "none", items=PREVIEW_CHOICES, title="Thumbnail Preview",
             subtitle="Show the upcoming/previous track's art instead of the current track's",
             on_change=self._on_preview_setting_changed,
+        )
+        self.setup_label_rows(
+            on_change=self._on_label_setting_changed,
+            top_default="none", middle_default="none", bottom_default="title",
         )
 
         self.add_event_assigner(EventAssigner(
@@ -44,10 +47,18 @@ class TrackStep(YTMDActionMixin, KeyAction):
         super().on_ready()
 
     def _on_preview_setting_changed(self, widget, new_value, old_value) -> None:
-        self._last_label = None
-        self._last_preview_key = None
         if self._latest_state is not None:
             self._render(self._latest_state)
+
+    def _on_label_setting_changed(self, widget, new_value, old_value) -> None:
+        if self._latest_state is None:
+            return
+        preview = self.preview_row.get_value(fallback="none")
+        if preview == "none":
+            self.render_chosen_labels(self._latest_state, force=True)
+        else:
+            item = self._get_adjacent_queue_item(self._latest_state, preview)
+            self.render_labels((item or {}).get("title", ""), (item or {}).get("author", ""), force=True)
 
     def on_ytmd_state(self, state: dict) -> None:
         self._latest_state = state
@@ -57,13 +68,9 @@ class TrackStep(YTMDActionMixin, KeyAction):
         preview = self.preview_row.get_value(fallback="none")
 
         if preview == "none":
-            title, _ = self.format_title_artist(state)
-            if title == self._last_label:
-                return
-            was_previewing = self._last_preview_key is not None or self._last_label is None
-            self._last_label = title
+            was_previewing = self._last_preview_key is not None
             self._last_preview_key = None
-            self.ui(self.set_bottom_label, title)
+            self.render_chosen_labels(state, force=was_previewing)
             if was_previewing:
                 # Coming back from preview mode - the key image is still whatever track was
                 # last previewed, reset it to the static icon rather than leaving it stuck.
@@ -73,14 +80,12 @@ class TrackStep(YTMDActionMixin, KeyAction):
 
         item = self._get_adjacent_queue_item(state, preview)
         key = (item or {}).get("videoId")
-        title = (item or {}).get("title", "")
 
         if key == self._last_preview_key:
             return
         self._last_preview_key = key
-        self._last_label = None
 
-        self.ui(self.set_bottom_label, title)
+        self.render_labels((item or {}).get("title", ""), (item or {}).get("author", ""), force=True)
 
         if item is None:
             icon_path = os.path.join(self.plugin_base.PATH, "assets", "info.png")

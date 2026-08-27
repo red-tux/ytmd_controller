@@ -64,7 +64,38 @@ class YTMDSettingsGroup(Adw.PreferencesGroup):
         pair_row.add_suffix(self.pair_button)
         self.add(pair_row)
 
+        self.add(Gtk.Separator(margin_top=12, margin_bottom=12))
+
+        self.cache_stats_label = Gtk.Label(label="")
+        cache_stats_row = Adw.ActionRow(title="Cached Thumbnails")
+        cache_stats_row.add_suffix(self.cache_stats_label)
+        self.add(cache_stats_row)
+
+        self.purge_button = Gtk.Button(
+            label="Purge Cache", valign=Gtk.Align.CENTER, css_classes=["destructive-action"]
+        )
+        self.purge_button.connect("clicked", self.on_purge_clicked)
+        purge_row = Adw.ActionRow(
+            title="Purge Thumbnail Cache",
+            subtitle="Deletes every cached thumbnail. They're re-downloaded from YTMD as needed.",
+        )
+        purge_row.add_suffix(self.purge_button)
+        self.add(purge_row)
+
+        max_entries = plugin_base.thumbnail_cache.get_max_entries()
+        self._max_entries_adjustment = Gtk.Adjustment.new(max_entries, 1, 1000, 1, 10, 0)
+        self.max_entries_row = Adw.SpinRow(
+            title="Max Cached Thumbnails",
+            subtitle="Applies immediately - no restart needed.",
+            adjustment=self._max_entries_adjustment,
+            value=max_entries,
+        )
+        self.max_entries_row.set_digits(0)
+        self.max_entries_row.connect("changed", self.on_max_entries_changed)
+        self.add(self.max_entries_row)
+
         self.update_status_label()
+        self.update_cache_stats_label()
 
     def on_host_port_changed(self, *args) -> None:
         settings = self.plugin_base.get_settings()
@@ -80,6 +111,19 @@ class YTMDSettingsGroup(Adw.PreferencesGroup):
         settings = self.plugin_base.get_settings()
         settings["app_id"] = sanitize_app_id(self.app_id_row.get_text())
         self.plugin_base.set_settings(settings)
+
+    def update_cache_stats_label(self) -> None:
+        count, total_bytes = self.plugin_base.thumbnail_cache.get_stats()
+        plural = "" if count == 1 else "s"
+        self.cache_stats_label.set_label(f"{count} thumbnail{plural} · {total_bytes / (1024 * 1024):.1f} MB")
+
+    def on_purge_clicked(self, button: Gtk.Button) -> None:
+        self.plugin_base.thumbnail_cache.purge()
+        self.update_cache_stats_label()
+
+    def on_max_entries_changed(self, spin_row: Adw.SpinRow) -> None:
+        self.plugin_base.on_thumbnail_cache_max_entries_changed(int(spin_row.get_value()))
+        self.update_cache_stats_label()
 
     def update_status_label(self) -> None:
         settings = self.plugin_base.get_settings()

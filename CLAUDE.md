@@ -18,15 +18,20 @@ python3 main.py --devel --data data --close-running
 
 The plugin id and folder name must stay in sync: `manifest.json`'s `id` field (falling back to the folder name if blank) is the plugin id, used as the prefix for every action id (`<plugin_id>::<ActionName>`).
 
-### Known dev-container bug: text labels don't render (PIL/GTK FreeType conflict)
+### Fixed: dev-container bug where text labels didn't render (PIL/GTK FreeType conflict)
 
-In this devcontainer specifically, `set_top_label`/`set_center_label`/`set_bottom_label` calls (both from this plugin and from StreamController's own manual Label Editor) silently fail to show any visible text, and raising a label's outline width can crash with `PIL.Image.DecompressionBombError`.
+In this devcontainer, `set_top_label`/`set_center_label`/`set_bottom_label` calls (both from this plugin and from StreamController's own manual Label Editor) used to silently fail to show any visible text, and raising a label's outline width could crash with `PIL.Image.DecompressionBombError`. **This is now fixed** at the devcontainer level (see below) — no plugin-side workaround is needed any more.
 
-Root cause, confirmed independent of any StreamController or plugin code: this venv's pip-installed Pillow bundles its own FreeType (`pillow.libs/libfreetype-*.so`), distinct from the system FreeType GTK/Pango loads. Importing GTK before touching PIL is enough to corrupt PIL's own text-measurement calls afterward — `ImageDraw.textbbox()` on the string `"Hello World"` at 15pt comes back ~86px wide with PIL alone, but literally millions of pixels wide (in either direction) once GTK has been imported in the same process. That garbage width is what pushes text off-canvas (invisible) and, with a larger stroke/outline width, over PIL's decompression-bomb limit.
+Root cause, confirmed independent of any StreamController or plugin code: the pip-installed Pillow wheel bundles its own private FreeType (`pillow.libs/libfreetype-*.so`), distinct from the system FreeType GTK/Pango load. It's not merely "GTK imported before PIL" — the corruption specifically needs a real `Gtk`/`Adw.Application` to actually activate against a live display (this devcontainer forwards the host's X11/Wayland sockets in, so GTK gets a real display connection, not a headless fallback). Once that happens, PIL's own text-measurement calls come back corrupted — `ImageDraw.textbbox()` on `"Hello World"` at 15pt, which is ~86px wide with PIL alone, comes back with garbage coordinates (e.g. `-2326586`) after GTK activates in the same process. That garbage is what pushed text off-canvas (invisible) and, with a larger stroke/outline width, over PIL's decompression-bomb limit.
 
-- Verified this is devcontainer-specific: a separate real Flatpak install (1.5.0-beta.15, fake deck) renders plain labels correctly. Flatpak's GNOME SDK runtime version-locks GTK and its dependents together, avoiding the mismatch a raw pip venv can hit.
-- Not a quick fix: `LD_PRELOAD`-ing the system libfreetype over PIL's bundled one did not resolve it (produced different garbage) — this needs an actual environment/packaging fix (e.g. rebuilding Pillow against the system FreeType), not an application-level workaround.
-- Practical implication: don't try to visually verify anything that depends on framework text-label rendering (title/artist labels, any `set_*_label` output) in this devcontainer — test on a real install instead. Pure image rendering (album art, the hand-drawn volume/progress bars) is unaffected, since it never goes through PIL's font/text measurement.
+- Verified independent of StreamController/plugin code via isolated repro scripts (PIL font load + `Adw.Application.run()` alone, no GTK/plugin code involved).
+- Also verified NOT present in a real Flatpak install (1.5.0-beta.15, fake deck) — the GNOME SDK runtime version-locks GTK and its dependents together, avoiding this. That's still true and remains a good verification path for anything this fix doesn't cover.
+- **Fix**: rebuild Pillow from source against the *system* FreeType instead of installing the prebuilt manylinux wheel, so there's only one FreeType in the process:
+  ```sh
+  uv pip install --no-binary pillow --reinstall --no-deps pillow==12.3.0
+  ```
+  This is now wired into the parent repo's `.devcontainer/devcontainer.json` `postCreateCommand`, so a fresh container rebuild picks it up automatically. If Pillow's version pin in the parent repo's `requirements.txt` ever changes, that `postCreateCommand` line needs its version bumped to match (it's a plain string pin, not auto-derived).
+  - `LD_PRELOAD`-ing the system libfreetype over PIL's bundled one does *not* work (produces different garbage) — the fix has to be an actual rebuild/relink, not a runtime override.
 
 ## Current state
 

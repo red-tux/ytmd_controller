@@ -17,6 +17,7 @@ class PlayPause(YTMDActionMixin, KeyAction):
         self._art_image = None
         self._latest_state = None
         self._last_progress_px = None
+        self._last_paused = None
 
     def on_ready(self) -> None:
         icon_path = os.path.join(self.plugin_base.PATH, "assets", "info.png")
@@ -33,8 +34,8 @@ class PlayPause(YTMDActionMixin, KeyAction):
 
         # state-update fires several times a second during playback (progress ticks) - only
         # touch the hardware for track-level things (art, title/artist) when the track
-        # actually changed. The progress bar is the one thing that legitimately needs to
-        # redraw every tick, and only does so when the user has actually enabled it.
+        # actually changed. The progress bar and pause overlay are the things that
+        # legitimately need to redraw on their own, and only do so when they actually change.
         track_key = self.video_id(state)
         track_changed = track_key != self._last_track_key
         if track_changed:
@@ -42,15 +43,24 @@ class PlayPause(YTMDActionMixin, KeyAction):
             self.render_chosen_labels(state, force=True)
             self.request_thumbnail(state, self._on_thumbnail)
 
+        paused = self.plugin_base.playback_state.is_paused()
+        paused_changed = paused != self._last_paused
+        self._last_paused = paused
+
+        progress_changed = False
         if self.progress_enabled() and self._art_image is not None:
             # The bar is only ever a few dozen pixels wide - redrawing (and pushing a full
             # image to the deck's render queue) on every tick when the fill wouldn't even
             # move a pixel is exactly what saturates the deck's render loop and trips its
             # low-FPS warning. Only redraw when the actual filled pixel width changes.
             px = round(self._art_image.width * self.progress_fraction(state))
-            if px != self._last_progress_px:
-                self._last_progress_px = px
-                self._redraw_image()
+            progress_changed = px != self._last_progress_px
+            self._last_progress_px = px
+
+        if (paused_changed or progress_changed) and not track_changed:
+            # If the track also changed, _on_thumbnail() will redraw once the new art arrives -
+            # redrawing here too would just repaint the old (soon to be replaced) art.
+            self._redraw_image()
 
     def _on_thumbnail(self, image) -> None:
         if image is not None:
@@ -65,17 +75,21 @@ class PlayPause(YTMDActionMixin, KeyAction):
         if self._art_image is None:
             return
 
-        if not self.progress_enabled():
-            self.ui(self.set_media, image=self._art_image, size=1.0)
-            return
+        image = self._art_image
+        if self.progress_enabled():
+            image = image.copy()
+            overlay = Image.new("RGBA", image.size, (0, 0, 0, 0))
+            fraction = self.progress_fraction(self._latest_state) if self._latest_state else 0.0
+            self.draw_progress_bar(ImageDraw.Draw(overlay), image.width, image.height, fraction)
+            image = Image.alpha_composite(image, overlay)
 
-        image = self._art_image.copy()
-        overlay = Image.new("RGBA", image.size, (0, 0, 0, 0))
-        fraction = self.progress_fraction(self._latest_state) if self._latest_state else 0.0
-        self.draw_progress_bar(ImageDraw.Draw(overlay), image.width, image.height, fraction)
-        image = Image.alpha_composite(image, overlay)
+        image = self.apply_pause_overlay(image)
 
         self.ui(self.set_media, image=image, size=1.0)
 
     def on_key_down(self, data=None) -> None:
+        paused = not self.plugin_base.playback_state.is_paused()
+        self.plugin_base.playback_state.set_paused(paused)
         self.send_command("playPause")
+        self._last_paused = paused
+        self._redraw_image()

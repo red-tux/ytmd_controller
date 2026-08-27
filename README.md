@@ -17,6 +17,14 @@ Every action below shares one connection, configured once in the plugin's own se
 
 That's the only setup step. Every action communicates through this single paired connection.
 
+## Thumbnail cache
+
+Album art (and other track art, like Track Step's upcoming-track preview) is cached to disk under the plugin's own folder, so returning to a recently-seen track doesn't re-download its artwork. The same settings screen as above shows:
+
+- **Cached Thumbnails** — how many images are cached and how much disk space they use.
+- **Purge Thumbnail Cache** — deletes every cached thumbnail. They're simply re-downloaded from YTMD the next time they're needed.
+- **Max Cached Thumbnails** — how many images to keep (oldest evicted first); defaults to 30. Changes apply immediately, no restart needed.
+
 ## The actions
 
 | Action | Input | What it does |
@@ -57,6 +65,8 @@ The only action here *without* an Event Assigner — it just toggles play/pause 
 | Progress Bar Opacity (%) | 10–100 | 100 |
 | Progress Bar Color | color picker | red |
 
+While paused, the art is dimmed with a pause icon overlaid - shared with Dial Control's pause status, so both always agree.
+
 ### Track Step
 
 | Function | Default gesture |
@@ -67,8 +77,9 @@ The only action here *without* an Event Assigner — it just toggles play/pause 
 | Setting | Values | Default |
 |---|---|---|
 | Thumbnail Preview | `none`, `next`, `previous` | `none` |
+| Top / Middle / Bottom Label | `none`, `title`, `artist` | `none` / `none` / `title` |
 
-With Thumbnail Preview set, the key shows the art/title of the *adjacent* track from YTMD's queue instead of the currently-playing one — handy for a "here's what's coming up next" key. With it off, the key shows the current track's title, like a normal transport button.
+With Thumbnail Preview set, the key shows the art of the *adjacent* track from YTMD's queue instead of the currently-playing one — handy for a "here's what's coming up next" key. The labels follow whichever track is being shown (adjacent track while previewing, current track otherwise).
 
 ### Volume Step
 
@@ -76,13 +87,14 @@ With Thumbnail Preview set, the key shows the art/title of the *adjacent* track 
 |---|---|
 | Volume Up | Key Down |
 | Volume Down | Key Hold Start |
+| Mute Toggle | *(no default)* |
 
 | Setting | Values | Default |
 |---|---|---|
 | Step | 1–100 | 10 |
 | Icon Display | `both`, `up`, `down` | `both` |
 
-The current volume is also shown as a `NN%` label. Set Icon Display to `up` or `down` (and remap the Event Assigner if you want) to make a pair of dedicated volume-up / volume-down keys instead of one key that does both.
+The current volume is also shown as a `NN%` label (or `Muted`, if muted from Dial Control or elsewhere - volume and mute status are shared across every action in this plugin, so they always agree). Set Icon Display to `up` or `down` (and remap the Event Assigner if you want) to make a pair of dedicated volume-up / volume-down keys instead of one key that does both.
 
 ### Dial Control
 
@@ -90,14 +102,20 @@ The most configurable action — a full now-playing display with every function 
 
 | Function | Default gesture |
 |---|---|
-| Play/Pause | Dial Down (press) |
+| Play/Pause | Dial Short Up |
 | Mute Toggle | Dial Touchscreen Short Press |
-| Next Track | Dial Short Up |
-| Previous Track | Dial Hold Start |
+| Next Track | *(no default)* |
+| Previous Track | *(no default)* |
 | Volume Up | Dial Turn CW |
 | Volume Down | Dial Turn CCW |
+| Like | *(no default)* |
+| Dislike | *(no default)* |
+| Toggle Like | Dial Hold Start |
+| Toggle Dislike | *(no default)* |
 
-*(Dial Up, Dial Hold Stop, and Dial Touchscreen Long Press have no default — bind them to whatever you like.)*
+Like/Dislike only ever move you *into* that state (pressing Like when already liked does nothing). Toggle Like/Toggle Dislike are the raw toggle instead - pressing again undoes it (back to neutral). All four briefly flash a matching thumb icon (green for like, red for dislike, gray if a toggle just undid a rating) over the dial for 7 seconds.
+
+*(Dial Up, Dial Down, Dial Hold Stop, and Dial Touchscreen Long Press have no default — bind them to whatever you like.)*
 
 ![Dial Control's settings panel](docs/screenshots/dial-control-settings.png)
 
@@ -115,9 +133,10 @@ The most configurable action — a full now-playing display with every function 
 | Maintain Aspect Ratio | on/off | off (stretches art to fill) |
 | Art Horizontal / Vertical Position | left/center/right, top/center/bottom | center / center |
 
-Two things worth knowing:
+Three things worth knowing:
 - If both the progress bar and volume bar are enabled, the progress bar reserves its height off the bottom of the dial first, and the volume bar's fill range is scaled to whatever space is left above it, so they never overlap.
 - Turning the dial always unmutes first (a muted knob that silently changes an inaudible volume isn't useful), and the mute icon dims the volume bar rather than showing a separate indicator.
+- While paused, the whole dial is dimmed with a pause icon overlaid - shared with Play/Pause's pause status, so both always agree.
 
 ### Shuffle & Repeat
 
@@ -137,6 +156,10 @@ No additional settings. The key shows a static shuffle glyph (crossed lines) abo
 |---|---|
 | Like | Key Down |
 | Dislike | Key Hold Start |
+| Toggle Like | *(no default)* |
+| Toggle Dislike | *(no default)* |
+
+Like/Dislike only ever move you *into* that state (pressing Like when already liked does nothing). Toggle Like/Toggle Dislike are the raw toggle instead - pressing again undoes it (back to neutral).
 
 | Setting | Values | Default |
 |---|---|---|
@@ -146,5 +169,4 @@ Unlike shuffle, YTMD does report the current rating, so Like/Dislike are true "s
 
 ## Notes
 
-- Album art and any other track art (e.g. Track Step's upcoming-track preview) is cached to disk under the plugin's own folder, so returning to a recently-seen track doesn't re-download its artwork.
-- All of the shuffle/repeat and thumbs icons are simple hand-drawn shapes, not polished artwork — see the `# TODO` markers in each action's source for where nicer icon assets would slot in.
+- Shuffle/repeat, thumbs up/down, and volume up/down icons are Google's [Material Icons](https://github.com/google/material-design-icons) (Apache License 2.0), bundled as SVGs under `assets/icons/material/` and recolored per state at render time — see `assets/icons/material/NOTICE.md` for attribution.

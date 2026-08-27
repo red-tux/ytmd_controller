@@ -10,7 +10,7 @@ from GtkHelper.GenerativeUI.SpinRow import SpinRow
 from GtkHelper.GenerativeUI.ColorButtonRow import ColorButtonRow
 from GtkHelper.GenerativeUI.SwitchRow import SwitchRow
 
-from ..common.ytmd_action_base import YTMDActionMixin
+from ..common.ytmd_action_base import YTMDActionMixin, paste_material_icon
 
 STEP = 2
 # YTMD rate-limits /command; a fast spin of the dial fires one turn event per detent, so the
@@ -19,11 +19,22 @@ STEP = 2
 DEBOUNCE_SECONDS = 0.25
 # How long the volume bar stays visible after a change, in "auto" bar mode.
 AUTO_HIDE_SECONDS = 2.0
+# How long the like/dislike confirmation icon stays visible after Like/Dislike fires.
+THUMB_FLASH_SECONDS = 7.0
 
 BACKGROUND_COLOR = (20, 20, 20, 255)
 MUTED_BAR_COLOR = (120, 120, 120)
 DEFAULT_BAR_COLOR = (0, 200, 83, 255)
 FALLBACK_SIZE = (200, 100)
+
+# video.likeStatus values reported by YTMD's /state.
+LIKE_DISLIKE = 0
+LIKE_LIKE = 2
+
+# Same colors as ThumbsRating's states, for a consistent look across the plugin.
+LIKE_FLASH_COLOR = (0, 200, 83, 255)
+DISLIKE_FLASH_COLOR = (220, 53, 69, 255)
+NEUTRAL_FLASH_COLOR = (120, 120, 120, 255)
 
 
 class DialControl(YTMDActionMixin, DialAction):
@@ -39,11 +50,14 @@ class DialControl(YTMDActionMixin, DialAction):
         self._show_bar = False
         self._pending_send_timer = None
         self._hide_bar_timer = None
+        self._thumb_flash = None
+        self._thumb_flash_timer = None
         self._art_image = None
         self._raw_art_image = None
         self._last_video_id = None
         self._latest_state = None
         self._last_progress_px = None
+        self._last_paused = None
 
         self.setup_label_rows(on_change=self._on_bar_setting_changed)
         self.setup_progress_rows(on_change=self._on_bar_setting_changed)
@@ -82,20 +96,14 @@ class DialControl(YTMDActionMixin, DialAction):
 
         self.add_event_assigner(EventAssigner(
             id="Play/Pause", ui_label="Play/Pause",
-            default_events=[Input.Dial.Events.DOWN], callback=self._do_play_pause,
+            default_events=[Input.Dial.Events.SHORT_UP], callback=self._do_play_pause,
         ))
         self.add_event_assigner(EventAssigner(
             id="Mute Toggle", ui_label="Mute Toggle",
             default_events=[Input.Dial.Events.SHORT_TOUCH_PRESS], callback=self._do_mute_toggle,
         ))
-        self.add_event_assigner(EventAssigner(
-            id="Next Track", ui_label="Next Track",
-            default_events=[Input.Dial.Events.SHORT_UP], callback=self._do_next,
-        ))
-        self.add_event_assigner(EventAssigner(
-            id="Previous Track", ui_label="Previous Track",
-            default_events=[Input.Dial.Events.HOLD_START], callback=self._do_previous,
-        ))
+        self.add_event_assigner(EventAssigner(id="Next Track", ui_label="Next Track", callback=self._do_next))
+        self.add_event_assigner(EventAssigner(id="Previous Track", ui_label="Previous Track", callback=self._do_previous))
         self.add_event_assigner(EventAssigner(
             id="Volume Up", ui_label="Volume Up",
             default_events=[Input.Dial.Events.TURN_CW], callback=self._do_volume_up,
@@ -104,6 +112,15 @@ class DialControl(YTMDActionMixin, DialAction):
             id="Volume Down", ui_label="Volume Down",
             default_events=[Input.Dial.Events.TURN_CCW], callback=self._do_volume_down,
         ))
+        self.add_event_assigner(EventAssigner(id="Like", ui_label="Like", callback=self._do_like))
+        self.add_event_assigner(EventAssigner(
+            id="Dislike", ui_label="Dislike", callback=self._do_dislike,
+        ))
+        self.add_event_assigner(EventAssigner(
+            id="Toggle Like", ui_label="Toggle Like",
+            default_events=[Input.Dial.Events.HOLD_START], callback=self._do_toggle_like,
+        ))
+        self.add_event_assigner(EventAssigner(id="Toggle Dislike", ui_label="Toggle Dislike", callback=self._do_toggle_dislike))
 
     def on_ready(self) -> None:
         self._redraw()
@@ -131,6 +148,7 @@ class DialControl(YTMDActionMixin, DialAction):
     def on_disconnect(self) -> None:
         self._cancel_pending_send()
         self._cancel_hide_bar()
+        self._cancel_thumb_flash()
         super().on_disconnect()
 
     def on_ytmd_state(self, state: dict) -> None:
@@ -140,21 +158,20 @@ class DialControl(YTMDActionMixin, DialAction):
         # legitimately needs to redraw every tick, and only does so when actually enabled.
         self._latest_state = state
 
-        player = state.get("player") or {}
-        muted = player.get("muted", self._muted)
+        # Reads from the shared VolumeState (updated centrally in main.py before this fires)
+        # rather than raw `player.muted`/`player.volume`, so this always agrees with VolumeStep
+        # and any other volume display.
+        muted = self.plugin_base.volume_state.get_muted()
         muted_changed = muted != self._muted
+        self._muted = muted
 
         volume_changed = False
-        # Two reasons to not blindly adopt the server-reported volume:
-        # 1. YTMD reports volume as 0 while muted, which would clobber the pre-mute level
-        #    we need to restore to once the dial is turned again.
-        # 2. While a local turn is still debounced (not sent yet), an update reflecting an
-        #    older value would stomp the in-progress local change out from under the user.
-        if not muted and self._pending_send_timer is None:
-            new_volume = player.get("volume", self._volume)
+        # While a local turn is still debounced (not sent yet), adopting an update here would
+        # stomp the in-progress local change out from under the user.
+        if self._pending_send_timer is None:
+            new_volume = self.plugin_base.volume_state.get_volume()
             volume_changed = new_volume != self._volume
             self._volume = new_volume
-        self._muted = muted
 
         track_id = self.video_id(state)
         track_changed = track_id != self._last_video_id
@@ -174,7 +191,11 @@ class DialControl(YTMDActionMixin, DialAction):
             progress_changed = px != self._last_progress_px
             self._last_progress_px = px
 
-        if muted_changed or volume_changed or progress_changed:
+        paused = self.plugin_base.playback_state.is_paused()
+        paused_changed = paused != self._last_paused
+        self._last_paused = paused
+
+        if muted_changed or volume_changed or progress_changed or paused_changed:
             self._redraw()
 
     def _on_thumbnail(self, image) -> None:
@@ -215,10 +236,15 @@ class DialControl(YTMDActionMixin, DialAction):
     # --- assignable functions -------------------------------------------------
 
     def _do_play_pause(self, data=None) -> None:
+        paused = not self.plugin_base.playback_state.is_paused()
+        self.plugin_base.playback_state.set_paused(paused)
         self.send_command("playPause")
+        self._last_paused = paused
+        self._redraw()
 
     def _do_mute_toggle(self, data=None) -> None:
         self._muted = not self._muted
+        self.plugin_base.volume_state.set_muted(self._muted)
         self.send_command("mute" if self._muted else "unmute")
         self._flash_bar()
 
@@ -233,6 +259,32 @@ class DialControl(YTMDActionMixin, DialAction):
 
     def _do_volume_down(self, data=None) -> None:
         self._adjust_volume(-STEP)
+
+    def _do_like(self, data=None) -> None:
+        like_status = self.get_video(self._latest_state or {}).get("likeStatus")
+        if like_status != LIKE_LIKE:
+            self.send_command("toggleLike")
+        self._flash_thumb("thumb_up", LIKE_FLASH_COLOR)
+
+    def _do_dislike(self, data=None) -> None:
+        like_status = self.get_video(self._latest_state or {}).get("likeStatus")
+        if like_status != LIKE_DISLIKE:
+            self.send_command("toggleDislike")
+        self._flash_thumb("thumb_down", DISLIKE_FLASH_COLOR)
+
+    def _do_toggle_like(self, data=None) -> None:
+        # Unlike Like above, this is the raw toggle - if already liked, this un-likes it
+        # (back to indifferent) instead of leaving it liked.
+        like_status = self.get_video(self._latest_state or {}).get("likeStatus")
+        self.send_command("toggleLike")
+        color = NEUTRAL_FLASH_COLOR if like_status == LIKE_LIKE else LIKE_FLASH_COLOR
+        self._flash_thumb("thumb_up", color)
+
+    def _do_toggle_dislike(self, data=None) -> None:
+        like_status = self.get_video(self._latest_state or {}).get("likeStatus")
+        self.send_command("toggleDislike")
+        color = NEUTRAL_FLASH_COLOR if like_status == LIKE_DISLIKE else DISLIKE_FLASH_COLOR
+        self._flash_thumb("thumb_down", color)
 
     def _adjust_volume(self, delta: int) -> None:
         # Adjusting volume always means "I want sound" - unmute rather than silently
@@ -287,6 +339,27 @@ class DialControl(YTMDActionMixin, DialAction):
             self._hide_bar_timer.cancel()
             self._hide_bar_timer = None
 
+    # --- like/dislike confirmation flash -------------------------------------------
+
+    def _flash_thumb(self, icon_name: str, color: tuple) -> None:
+        self._thumb_flash = (icon_name, color)
+        self._redraw()
+
+        self._cancel_thumb_flash()
+        self._thumb_flash_timer = threading.Timer(THUMB_FLASH_SECONDS, self._clear_thumb_flash)
+        self._thumb_flash_timer.daemon = True
+        self._thumb_flash_timer.start()
+
+    def _clear_thumb_flash(self) -> None:
+        self._thumb_flash_timer = None
+        self._thumb_flash = None
+        self._redraw()
+
+    def _cancel_thumb_flash(self) -> None:
+        if self._thumb_flash_timer is not None:
+            self._thumb_flash_timer.cancel()
+            self._thumb_flash_timer = None
+
     # --- rendering -----------------------------------------------------------
 
     def _redraw(self) -> None:
@@ -326,5 +399,10 @@ class DialControl(YTMDActionMixin, DialAction):
 
             draw.rectangle([bar_left, volume_area_height - fill_height, width, volume_area_height], fill=bar_color)
 
+        if self._thumb_flash is not None:
+            icon_name, color = self._thumb_flash
+            paste_material_icon(overlay, icon_name, (0, 0, width, height), color)
+
         image = Image.alpha_composite(image, overlay)
+        image = self.apply_pause_overlay(image)
         self.ui(self.set_media, image=image, size=1.0)

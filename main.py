@@ -14,7 +14,9 @@ from loguru import logger as log
 # Import plugin internals
 from .internal.ytmd_client import YTMDClient, DEFAULT_HOST, DEFAULT_PORT
 from .internal.state_store import StateStore
-from .internal.thumbnail_cache import ThumbnailCache
+from .internal.thumbnail_cache import ThumbnailCache, DEFAULT_MAX_ENTRIES as DEFAULT_THUMBNAIL_CACHE_ENTRIES
+from .internal.volume_state import VolumeState
+from .internal.playback_state import PlaybackState
 from .settings_area import YTMDSettingsGroup
 
 # Import actions
@@ -47,11 +49,20 @@ class YTMDControllerPlugin(PluginBase):
         super().__init__()
 
         self.state_store = StateStore()
-        # Shared by any code with access to the plugin - actions, settings UI, future widgets -
-        # to fetch/cache any image by (key, url), not just the currently-playing track's art.
-        self.thumbnail_cache = ThumbnailCache(cache_dir=os.path.join(self.PATH, "cache", "thumbnails"))
 
         settings = self.get_settings()
+        # Shared by any code with access to the plugin - actions, settings UI, future widgets -
+        # to fetch/cache any image by (key, url), not just the currently-playing track's art.
+        self.thumbnail_cache = ThumbnailCache(
+            cache_dir=os.path.join(self.PATH, "cache", "thumbnails"),
+            max_entries=settings.get("thumbnail_cache_max_entries", DEFAULT_THUMBNAIL_CACHE_ENTRIES),
+        )
+        # Single source of truth for volume/mute, updated in on_state_update() below before
+        # actions see the state - see internal/volume_state.py for why this needs to be shared.
+        self.volume_state = VolumeState()
+        # Same idea, for pause status - see internal/playback_state.py.
+        self.playback_state = PlaybackState()
+
         self.client = YTMDClient(
             host=settings.get("host", DEFAULT_HOST),
             port=settings.get("port", DEFAULT_PORT),
@@ -65,7 +76,7 @@ class YTMDControllerPlugin(PluginBase):
                 action_id_suffix="PlayPause",
                 action_name="Play/Pause",
                 action_support=KEY_ONLY_SUPPORT,
-                description="Shows the currently playing track's art/title/artist; toggles play/pause when pressed.",
+                description="Shows the currently playing track's art/title/artist; toggles play/pause when pressed. Overlays a dimmed pause icon while paused, shared with Dial Control so both always agree.",
                 settings_schema={
                     "top_label": {"type": "string", "values": ["none", "title", "artist"], "default": "title"},
                     "middle_label": {"type": "string", "values": ["none", "title", "artist"], "default": "artist"},
@@ -90,6 +101,9 @@ class YTMDControllerPlugin(PluginBase):
                 ),
                 settings_schema={
                     "preview": {"type": "string", "values": ["none", "next", "previous"], "default": "none"},
+                    "top_label": {"type": "string", "values": ["none", "title", "artist"], "default": "none"},
+                    "middle_label": {"type": "string", "values": ["none", "title", "artist"], "default": "none"},
+                    "bottom_label": {"type": "string", "values": ["none", "title", "artist"], "default": "title"},
                 },
             ),
             ActionHolder(
@@ -99,10 +113,11 @@ class YTMDControllerPlugin(PluginBase):
                 action_name="Volume Step",
                 action_support=KEY_ONLY_SUPPORT,
                 description=(
-                    "Volume Up and Volume Down are separately assignable via the Event "
-                    "Assigner (e.g. press = up, hold = down, on one key). 'Icon Display' picks "
-                    "whether this key shows both direction icons, or just one - place it twice "
-                    "for dedicated up/down keys."
+                    "Volume Up, Volume Down, and Mute Toggle are separately assignable via the "
+                    "Event Assigner (e.g. press = up, hold = down, on one key). 'Icon Display' "
+                    "picks whether this key shows both direction icons, or just one - place it "
+                    "twice for dedicated up/down keys. Shows the current volume % (or 'Muted'), "
+                    "shared with Dial Control so both always agree."
                 ),
                 settings_schema={
                     "step": {"type": "int", "default": 10},
@@ -118,7 +133,10 @@ class YTMDControllerPlugin(PluginBase):
                 description=(
                     "Configurable dial: every gesture (press, hold, touchscreen tap, turn) can be "
                     "bound to any function - Play/Pause, Mute Toggle, Next/Previous Track, Volume "
-                    "Up/Down - via the Event Assigner. Shows album art with an optional volume bar."
+                    "Up/Down, Like/Dislike/Toggle Like/Toggle Dislike - via the Event Assigner. "
+                    "Shows album art with an optional volume bar; firing a like/dislike function "
+                    "also briefly flashes a matching thumb icon. Overlays a dimmed pause icon "
+                    "while paused, shared with Play/Pause so both always agree."
                 ),
                 settings_schema={
                     "bar_mode": {"type": "string", "values": ["auto", "always"], "default": "auto"},
@@ -158,9 +176,11 @@ class YTMDControllerPlugin(PluginBase):
                 action_name="Thumbs Up/Down",
                 action_support=KEY_ONLY_SUPPORT,
                 description=(
-                    "Like and Dislike are separately assignable via the Event Assigner (e.g. "
-                    "press = like, hold = dislike, on one key). Shows the real current rating "
-                    "(YTMD does report like status). 'Icon Display' picks whether this key "
+                    "Like, Dislike, Toggle Like, and Toggle Dislike are separately assignable via "
+                    "the Event Assigner (e.g. press = like, hold = dislike, on one key). Like/"
+                    "Dislike only ever move you into that state (idempotent); Toggle Like/Toggle "
+                    "Dislike are the raw toggle - pressing again undoes it. Shows the real current "
+                    "rating (YTMD does report like status). 'Icon Display' picks whether this key "
                     "shows both icons, or just one - place it twice for dedicated like/dislike keys."
                 ),
                 settings_schema={
@@ -212,6 +232,14 @@ class YTMDControllerPlugin(PluginBase):
         self.client.token = settings.get("token")
         self._push_backend_config()
 
+    def on_thumbnail_cache_max_entries_changed(self, max_entries: int) -> None:
+        """Called by the settings UI when 'Max Cached Thumbnails' changes. Applies immediately -
+        no restart needed, since the cache reads its limit fresh on every write/prune."""
+        settings = self.get_settings()
+        settings["thumbnail_cache_max_entries"] = max_entries
+        self.set_settings(settings)
+        self.thumbnail_cache.set_max_entries(max_entries)
+
     def on_state_update(self, state: str) -> None:
         """Called by the backend process (over RPyC) whenever YTMD pushes a state-update event.
 
@@ -219,7 +247,10 @@ class YTMDControllerPlugin(PluginBase):
         for why (rpyc proxies plain dicts by reference across the RPyC boundary instead of
         copying them, which causes every field access here to silently round-trip back to the
         backend process and eventually recurse)."""
-        self.state_store.update(json.loads(state))
+        parsed = json.loads(state)
+        self.volume_state.update(parsed)
+        self.playback_state.update(parsed)
+        self.state_store.update(parsed)
 
     def on_connection_status(self, connected: bool) -> None:
         """Called by the backend process (over RPyC) when the realtime socket connects/drops."""
