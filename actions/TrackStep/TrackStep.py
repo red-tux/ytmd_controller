@@ -42,8 +42,13 @@ class TrackStep(YTMDActionMixin, KeyAction):
         ))
 
     def on_ready(self) -> None:
-        icon_path = os.path.join(self.plugin_base.PATH, "assets", "info.png")
-        self.set_media(media_path=icon_path, size=0.75)
+        # Skip the placeholder when preview art is already on the key - on_ready() re-runs on
+        # every page revisit, and super().on_ready() resets _last_preview_key so the state
+        # replay in _render() re-requests and repaints. Setting the icon here would just
+        # flash it. (With preview off, TrackStep only ever shows this icon anyway.)
+        if self._last_preview_key is None:
+            icon_path = os.path.join(self.plugin_base.PATH, "assets", "info.png")
+            self.set_media(media_path=icon_path, size=0.75)
         super().on_ready()
 
     def _on_preview_setting_changed(self, widget, new_value, old_value) -> None:
@@ -99,7 +104,7 @@ class TrackStep(YTMDActionMixin, KeyAction):
         self.plugin_base.thumbnail_cache.request(key, url, self._on_preview_thumbnail)
 
     def _on_preview_thumbnail(self, image) -> None:
-        if image is None:
+        if image is None or not self.get_is_present():
             return
         width, height = self.get_display_size()
         image = image.resize((width, height)).convert("RGBA")

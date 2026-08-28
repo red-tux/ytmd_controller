@@ -17,6 +17,7 @@ from .internal.state_store import StateStore
 from .internal.thumbnail_cache import ThumbnailCache, DEFAULT_MAX_ENTRIES as DEFAULT_THUMBNAIL_CACHE_ENTRIES
 from .internal.volume_state import VolumeState
 from .internal.playback_state import PlaybackState
+from .internal import profiling
 from .settings_area import YTMDSettingsGroup
 
 # Import actions
@@ -50,6 +51,7 @@ class YTMDControllerPlugin(PluginBase):
         super().__init__()
 
         self.state_store = StateStore()
+        profiling.ensure_reporter()  # no-op unless YTMD_PROFILE is set
 
         settings = self.get_settings()
         # Shared by any code with access to the plugin - actions, settings UI, future widgets -
@@ -237,9 +239,11 @@ class YTMDControllerPlugin(PluginBase):
     def on_connection_settings_changed(self) -> None:
         """Called by the settings UI whenever host/port/token change (including after pairing)."""
         settings = self.get_settings()
-        self.client.host = settings.get("host", DEFAULT_HOST)
-        self.client.port = settings.get("port", DEFAULT_PORT)
-        self.client.token = settings.get("token")
+        self.client.configure(
+            settings.get("host", DEFAULT_HOST),
+            settings.get("port", DEFAULT_PORT),
+            settings.get("token"),
+        )
         self._push_backend_config()
 
     def on_thumbnail_cache_max_entries_changed(self, max_entries: int) -> None:
@@ -257,6 +261,7 @@ class YTMDControllerPlugin(PluginBase):
         for why (rpyc proxies plain dicts by reference across the RPyC boundary instead of
         copying them, which causes every field access here to silently round-trip back to the
         backend process and eventually recurse)."""
+        profiling.incr("state_update.recv")
         parsed = json.loads(state)
         self.volume_state.update(parsed)
         self.playback_state.update(parsed)

@@ -20,8 +20,16 @@ class PlayPause(YTMDActionMixin, KeyAction):
         self._last_paused = None
 
     def on_ready(self) -> None:
-        icon_path = os.path.join(self.plugin_base.PATH, "assets", "info.png")
-        self.set_media(media_path=icon_path, size=0.75)
+        # Only show the placeholder before there's any art. on_ready() re-runs on every page
+        # revisit; once art is cached, super().on_ready()'s state replay re-pushes it, so
+        # setting the icon here again would just flash it over the real art.
+        if self._art_image is None:
+            icon_path = os.path.join(self.plugin_base.PATH, "assets", "info.png")
+            self.set_media(media_path=icon_path, size=0.75)
+        else:
+            # Revisit with art already cached - re-push it now (the core cleared the key
+            # image just before this call) instead of waiting for the state replay.
+            self._redraw_image()
         super().on_ready()
 
     def _on_setting_changed(self, widget, new_value, old_value) -> None:
@@ -63,6 +71,8 @@ class PlayPause(YTMDActionMixin, KeyAction):
             self._redraw_image()
 
     def _on_thumbnail(self, image) -> None:
+        if not self.get_is_present():
+            return
         if image is not None:
             width, height = self.get_display_size()
             self._art_image = image.resize((width, height)).convert("RGBA")

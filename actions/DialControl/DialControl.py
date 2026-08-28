@@ -198,6 +198,8 @@ class DialControl(YTMDActionMixin, DialAction):
             self._redraw()
 
     def _on_thumbnail(self, image) -> None:
+        if not self.get_is_present():
+            return
         self._raw_art_image = image
         self._last_progress_px = None
         self._apply_art_fit()
@@ -324,11 +326,21 @@ class DialControl(YTMDActionMixin, DialAction):
             return
 
         self._cancel_hide_bar()
-        self._hide_bar_timer = threading.Timer(AUTO_HIDE_SECONDS, self._hide_bar)
-        self._hide_bar_timer.daemon = True
-        self._hide_bar_timer.start()
+        timer = threading.Timer(AUTO_HIDE_SECONDS, lambda: self._hide_bar(timer))
+        timer.daemon = True
+        self._hide_bar_timer = timer
+        timer.start()
 
-    def _hide_bar(self) -> None:
+    def _hide_bar(self, timer: threading.Timer) -> None:
+        # threading.Timer thread - bounce onto the main thread so the _show_bar write and
+        # the PIL compositing in _redraw() stay on the same thread as on_ytmd_state().
+        self.ui(self._hide_bar_main, timer)
+
+    def _hide_bar_main(self, timer: threading.Timer) -> None:
+        # Ignore a timer that a newer _flash_bar() already superseded while this callback
+        # sat in the idle queue.
+        if self._hide_bar_timer is not timer:
+            return
         self._hide_bar_timer = None
         self._show_bar = False
         self._redraw()
@@ -345,11 +357,18 @@ class DialControl(YTMDActionMixin, DialAction):
         self._redraw()
 
         self._cancel_thumb_flash()
-        self._thumb_flash_timer = threading.Timer(THUMB_FLASH_SECONDS, self._clear_thumb_flash)
-        self._thumb_flash_timer.daemon = True
-        self._thumb_flash_timer.start()
+        timer = threading.Timer(THUMB_FLASH_SECONDS, lambda: self._clear_thumb_flash(timer))
+        timer.daemon = True
+        self._thumb_flash_timer = timer
+        timer.start()
 
-    def _clear_thumb_flash(self) -> None:
+    def _clear_thumb_flash(self, timer: threading.Timer) -> None:
+        # threading.Timer thread - bounce onto the main thread (see _hide_bar).
+        self.ui(self._clear_thumb_flash_main, timer)
+
+    def _clear_thumb_flash_main(self, timer: threading.Timer) -> None:
+        if self._thumb_flash_timer is not timer:
+            return
         self._thumb_flash_timer = None
         self._thumb_flash = None
         self._redraw()

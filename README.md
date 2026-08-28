@@ -175,3 +175,30 @@ Every icon this plugin draws (shuffle, repeat, thumbs up/down, volume up/down, p
 - **Colors** — repick the color each icon is tinted with (e.g. the "liked" green, the "disliked" red, repeat-on/off, the pause overlay's dim and icon color).
 
 Whichever shape you pick is always recolored using the matching color at render time (the same way the bundled defaults are) — so a custom icon works the same as the default, just with a different silhouette.
+
+## Performance
+
+This plugin does very little work of its own. It keeps one shared copy of YTMD's state, and when that state changes (a few times a second while a track plays) each placed action redraws only if something it actually displays changed. Measured against a live YTMD, the plugin's state handling costs roughly **0.2% of one CPU core** during playback.
+
+If StreamController itself is using noticeable CPU, that is almost always the **deck render loop**, not this plugin. Two things drive it:
+
+- **Animated page content.** A video or animated-GIF background (or key image) makes StreamController redraw the deck at full frame rate (~30 FPS). While that loop runs it re-rasterizes the **text of every label on every key** each frame — there is no glyph cache. A page with no animated content drops to ~2 FPS and this cost nearly disappears.
+- **Label and progress-bar count.** The per-frame redraw scales with how many labels are on screen, not how often they change. Each action here can show up to three labels; enabling the progress bar adds a full-key recomposite whenever its fill moves by a pixel (a few times a second, per key).
+
+To keep CPU down: prefer a plain-colour or static-image page background over an animated one, switch off labels you don't need, and leave the progress bar off unless you want it.
+
+### Built-in profiler
+
+Set the environment variable `YTMD_PROFILE=1` before starting StreamController and the plugin logs a summary every 10 seconds (`YTMD_PROFILE_INTERVAL` changes the interval). Lines are tagged `[ytmd-profile]` in StreamController's log (`<data>/logs/logs.log`):
+
+```
+[ytmd-profile] last 10s:
+  state_update.recv: 39 (3.9/s)     — YTMD state-updates received from the backend
+  dispatch: 273 (27.3/s)            — action callbacks run (updates × placed actions)
+  on_ytmd_state: 273 calls, 23.7ms total (mean 0.09ms, max 11.30ms) = 0.2% of one core
+  ui_push: 57 (5.7/s)               — image / label pushes to the deck
+```
+
+For a Flatpak install: `flatpak run --env=YTMD_PROFILE=1 com.core447.StreamController`.
+
+With the variable unset it does nothing — no background thread, no measurable overhead. For a full picture of where StreamController's CPU goes (this plugin and the core together), attach [`py-spy`](https://github.com/benfred/py-spy): `py-spy top --pid $(pgrep -f main.py)`.

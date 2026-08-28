@@ -7,6 +7,7 @@ access to it - actions, settings UI, future widgets - to fetch/cache any image b
 """
 import hashlib
 import os
+import queue
 import threading
 from collections import OrderedDict
 from io import BytesIO
@@ -15,6 +16,7 @@ from typing import Callable
 import requests
 from loguru import logger as log
 from PIL import Image
+from gi.repository import GLib
 
 DEFAULT_MAX_ENTRIES = 30
 
@@ -27,37 +29,66 @@ class ThumbnailCache:
         self._inflight: dict[str, list[Callable]] = {}
         self._lock = threading.Lock()
         self._disk_pruned = False
+        # All uncached resolutions go through this one worker rather than a thread per
+        # request, so a burst of track changes / queue-art requests can't spawn an
+        # unbounded pile of concurrent downloads, and a stale request can't run ahead
+        # of a live one.
+        self._queue: "queue.Queue[tuple[str, str]]" = queue.Queue()
+        threading.Thread(target=self._worker_loop, name="ytmd_thumbnail_worker", daemon=True).start()
 
     def request(self, key: str, url: str, callback: Callable[[Image.Image | None], None]) -> None:
         """Resolve an image for `key` without blocking the caller.
 
-        A memory-cache hit calls back immediately (no I/O); otherwise resolution (disk read,
-        or network fetch as a last resort) happens in a background thread. Concurrent requests
-        for the same `key` that arrive before the first one resolves are coalesced into that
-        single resolution instead of triggering their own redundant fetch.
+        A memory-cache hit calls back right away; otherwise resolution (disk read, or a
+        network fetch as a last resort) is handed to the single background worker.
+        Concurrent requests for the same `key` that arrive before it resolves are coalesced
+        onto that one resolution. Every callback - hit or miss - is invoked via
+        GLib.idle_add, so callers always run on the GTK main thread.
         """
         with self._lock:
             cached = self._memory.get(key)
             if cached is not None:
                 self._memory.move_to_end(key)
-                image = cached
-            else:
-                waiters = self._inflight.get(key)
-                if waiters is not None:
-                    waiters.append(callback)
-                    log.info(f"[thumbnail] {key} - coalesced onto an in-flight resolution")
-                    return
-                self._inflight[key] = [callback]
-                image = None
+                log.info(f"[thumbnail] {key} - memory cache hit")
+                GLib.idle_add(callback, cached)
+                return
 
-        if image is not None:
-            log.info(f"[thumbnail] {key} - memory cache hit")
-            callback(image)
-            return
+            waiters = self._inflight.get(key)
+            if waiters is not None:
+                waiters.append(callback)
+                log.info(f"[thumbnail] {key} - coalesced onto an in-flight resolution")
+                return
+            self._inflight[key] = [callback]
 
-        threading.Thread(target=lambda: self._resolve(key, url), daemon=True).start()
+        self._queue.put((key, url))
+
+    def _worker_loop(self) -> None:
+        while True:
+            key, url = self._queue.get()
+            try:
+                self._resolve(key, url)
+            except Exception as e:
+                log.error(f"[thumbnail] {key} - worker error: {e}")
+                with self._lock:
+                    waiters = self._inflight.pop(key, [])
+                for callback in waiters:
+                    GLib.idle_add(callback, None)
 
     def _resolve(self, key: str, url: str) -> None:
+        # The key may have been cached (disk hit on another key that shares the image, or a
+        # coalesced sibling that already ran) between being queued and the worker reaching it.
+        with self._lock:
+            cached = self._memory.get(key)
+            if cached is not None:
+                self._memory.move_to_end(key)
+        if cached is not None:
+            log.info(f"[thumbnail] {key} - already in memory by the time the worker reached it")
+            with self._lock:
+                waiters = self._inflight.pop(key, [])
+            for callback in waiters:
+                GLib.idle_add(callback, cached)
+            return
+
         cache_dir = self._ensure_cache_dir()
         disk_path = self._disk_path(cache_dir, key)
 
@@ -83,7 +114,7 @@ class ThumbnailCache:
         with self._lock:
             waiters = self._inflight.pop(key, [])
         for callback in waiters:
-            callback(image)
+            GLib.idle_add(callback, image)
 
     def _ensure_cache_dir(self) -> str:
         os.makedirs(self._cache_dir, exist_ok=True)

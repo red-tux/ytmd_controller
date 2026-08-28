@@ -14,6 +14,8 @@ from GtkHelper.GenerativeUI.SwitchRow import SwitchRow
 from GtkHelper.GenerativeUI.SpinRow import SpinRow
 from GtkHelper.GenerativeUI.ColorButtonRow import ColorButtonRow
 
+from ...internal import profiling as _profiling
+
 LABEL_CHOICES = ["none", "title", "artist"]
 DEFAULT_PROGRESS_COLOR = (255, 0, 0, 255)
 
@@ -84,8 +86,31 @@ COLOR_ASSET_DEFAULTS = {
 
 
 class YTMDActionMixin:
+    # Per-action "last rendered X" bookkeeping that on_ytmd_state() uses to skip redundant
+    # hardware writes. on_ready() is the framework's redraw entry point (on_update() calls
+    # it) and runs again on every page (re)load - and the core clears the input's image
+    # just before that call, so a re-entry has to repaint from scratch. Nulling these lets
+    # the replayed state pass fall through its change checks and do a full redraw. Cached
+    # art (_art_image/_raw_art_image) is deliberately kept - the replay re-pushes it via a
+    # cache hit rather than re-fetching.
+    _RENDER_CACHE_ATTRS = (
+        "_last_rendered_labels", "_last_track_key", "_last_video_id", "_last_preview_key",
+        "_last_like_status", "_last_repeat_mode", "_last_displayed", "_last_progress_px",
+        "_last_paused",
+    )
+
+    def _reset_render_cache(self) -> None:
+        for attr in self._RENDER_CACHE_ATTRS:
+            if hasattr(self, attr):
+                setattr(self, attr, None)
+
     def on_ready(self) -> None:
-        self._state_token = self.plugin_base.state_store.subscribe_state(self.on_ytmd_state)
+        # Idempotent: subscribing unconditionally would leak a StateStore subscription on
+        # every page revisit. on_disconnect() nulls the token so a genuine teardown/re-ready
+        # still re-subscribes.
+        if getattr(self, "_state_token", None) is None:
+            self._state_token = self.plugin_base.state_store.subscribe_state(self.on_ytmd_state)
+        self._reset_render_cache()
         latest = self.plugin_base.state_store.get_latest()
         if latest is not None:
             self.on_ytmd_state(latest)
@@ -97,8 +122,10 @@ class YTMDActionMixin:
             self._state_token = None
 
     def on_ytmd_state(self, state: dict) -> None:
-        """Override in the concrete action. May be called from the backend's RPyC callback
-        thread - route any set_media()/set_label() calls through self.ui() (GLib.idle_add)."""
+        """Override in the concrete action. Always invoked on the GTK main thread - StateStore
+        marshals its fan-out through GLib.idle_add and the on_ready() replay is already
+        main-thread - so the per-action bookkeeping here needs no locking. set_media()/
+        set_label() may be called directly; self.ui() stays harmless if used."""
 
     # EventAssigner always forwards whatever data the hardware callback produced (see
     # ActionCore._raw_event_callback -> EventAssigner.call(*args, **kwargs)), even when it's
@@ -138,6 +165,7 @@ class YTMDActionMixin:
     def ui(self, fn, *args, **kwargs) -> None:
         """Marshal a set_media()/set_label()-style call onto the GTK main thread.
         Event/tick callbacks and the backend's RPyC callback all run off-thread."""
+        _profiling.incr("ui_push")
         GLib.idle_add(lambda: fn(*args, **kwargs))
 
     def get_display_size(self, fallback: tuple[int, int] = (200, 100)) -> tuple[int, int]:

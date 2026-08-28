@@ -1,3 +1,5 @@
+import time
+
 from PIL import Image
 
 from src.backend.PluginManager.InputBases import KeyAction
@@ -13,6 +15,11 @@ from ..common.ytmd_action_base import (
 )
 
 ICON_CHOICES = ["both", "up", "down"]
+
+# After a local volume step, ignore the volume reported by state-updates for this long: YTMD's
+# echo of the change lags the command, so adopting it would stomp a fast sequence of presses
+# back to a stale level. Mute is unaffected (its echo is effectively immediate).
+LOCAL_GRACE_SECONDS = 0.5
 
 
 class VolumeStep(YTMDActionMixin, KeyAction):
@@ -31,6 +38,11 @@ class VolumeStep(YTMDActionMixin, KeyAction):
             on_change=self._on_icon_setting_changed,
         )
         self._last_displayed = None
+        # Local authoritative level so rapid presses accumulate instead of every press
+        # re-reading the same not-yet-updated shared value. Kept in step with the shared
+        # VolumeState by on_ytmd_state() outside the post-step grace window.
+        self._volume = self.plugin_base.volume_state.get_volume()
+        self._local_change_until = 0.0
 
         self.add_event_assigner(EventAssigner(
             id="Volume Up", ui_label="Volume Up",
@@ -53,14 +65,18 @@ class VolumeStep(YTMDActionMixin, KeyAction):
 
     def on_ytmd_state(self, state: dict) -> None:
         # state-update fires several times a second during playback (progress ticks) - only
-        # touch the hardware when the displayed value actually changed.
+        # touch the hardware when the displayed value actually changed. Adopt the shared
+        # volume unless a local step is still settling (see LOCAL_GRACE_SECONDS).
+        if time.monotonic() >= self._local_change_until:
+            self._volume = self.plugin_base.volume_state.get_volume()
         self._update_label()
 
     def _update_label(self) -> None:
-        # Reads from the shared VolumeState (updated centrally in main.py before this fires)
-        # rather than raw `player.volume`, so this always agrees with DialControl and any other
-        # volume display - including reflecting mute, which `player.volume` alone doesn't.
-        volume = self.plugin_base.volume_state.get_volume()
+        # self._volume is the local authoritative level (kept in step with the shared
+        # VolumeState by on_ytmd_state); mute comes straight from the shared state. Using both
+        # keeps this label in agreement with DialControl and any other volume display -
+        # including reflecting mute, which `player.volume` alone doesn't.
+        volume = self._volume
         muted = self.plugin_base.volume_state.get_muted()
         if (volume, muted) == self._last_displayed:
             return
@@ -80,16 +96,11 @@ class VolumeStep(YTMDActionMixin, KeyAction):
         self._update_label()
 
     def _step_volume(self, delta: int) -> None:
-        state = self.plugin_base.state_store.get_latest()
-        if state is None:
-            try:
-                state = self.plugin_base.client.get_state_once()
-            except Exception:
-                state = {}
-
-        current_volume = (state.get("player") or {}).get("volume", 50)
-        new_volume = max(0, min(100, current_volume + delta))
-        self.send_command("setVolume", new_volume)
+        self._volume = max(0, min(100, self._volume + delta))
+        self.plugin_base.volume_state.set_volume(self._volume)
+        self._local_change_until = time.monotonic() + LOCAL_GRACE_SECONDS
+        self.send_command("setVolume", self._volume)
+        self._update_label()
 
     # --- rendering -----------------------------------------------------------
 

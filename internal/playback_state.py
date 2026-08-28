@@ -9,6 +9,8 @@ https://github.com/XeroxDev/ytmdesktop-ts-companion for the enum this mirrors):
 still trying to play.
 """
 
+import threading
+
 TRACK_STATE_PAUSED = 0
 TRACK_STATE_PLAYING = 1
 TRACK_STATE_BUFFERING = 2
@@ -17,10 +19,14 @@ TRACK_STATE_BUFFERING = 2
 class PlaybackState:
     def __init__(self):
         self._track_state = TRACK_STATE_PLAYING
+        # Writers only - update() (backend thread) does a read-modify-write that must not
+        # interleave with an event thread's set_paused(). is_paused() stays lock-free.
+        self._lock = threading.Lock()
 
     def update(self, state: dict) -> None:
         player = (state or {}).get("player") or {}
-        self._track_state = player.get("trackState", self._track_state)
+        with self._lock:
+            self._track_state = player.get("trackState", self._track_state)
 
     def is_paused(self) -> bool:
         return self._track_state == TRACK_STATE_PAUSED
@@ -29,4 +35,5 @@ class PlaybackState:
         """Optimistic local update for whichever action just sent playPause - sets it here
         (not just on that action's own instance) so every other display reflects it immediately
         instead of waiting for the round trip back through the next state-update."""
-        self._track_state = TRACK_STATE_PAUSED if paused else TRACK_STATE_PLAYING
+        with self._lock:
+            self._track_state = TRACK_STATE_PAUSED if paused else TRACK_STATE_PLAYING

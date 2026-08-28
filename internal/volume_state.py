@@ -9,15 +9,24 @@ already-current values instead of re-deriving (and possibly re-interpreting) the
 """
 
 
+import threading
+
+
 class VolumeState:
     def __init__(self):
         self._volume = 50
         self._muted = False
+        # Writers only: update() (backend thread) does a compound two-field write that
+        # must not interleave with an event thread's set_muted()/set_volume(). Readers
+        # (get_*) stay lock-free - a single attribute read is atomic under the GIL, and
+        # the brief cross-field skew that allows is invisible for a display value.
+        self._lock = threading.Lock()
 
     def update(self, state: dict) -> None:
         player = (state or {}).get("player") or {}
-        self._volume = player.get("volume", self._volume)
-        self._muted = player.get("muted", self._muted)
+        with self._lock:
+            self._volume = player.get("volume", self._volume)
+            self._muted = player.get("muted", self._muted)
 
     def get_volume(self) -> int:
         return self._volume
@@ -29,4 +38,12 @@ class VolumeState:
         """Optimistic local update for whichever action just sent mute/unmute - sets it here
         (not just on that action's own instance) so every other display reflects it immediately
         instead of waiting for the round trip back through the next state-update."""
-        self._muted = muted
+        with self._lock:
+            self._muted = muted
+
+    def set_volume(self, volume: int) -> None:
+        """Optimistic local update for whichever action just sent setVolume - same rationale
+        as set_muted(): every other volume display reflects it immediately instead of waiting
+        for the next state-update round trip."""
+        with self._lock:
+            self._volume = volume

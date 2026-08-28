@@ -4,6 +4,7 @@ Reference: https://github.com/ytmdesktop/ytmdesktop/wiki/v2-%E2%80%90-Companion-
 """
 import re
 import socket
+import threading
 
 import requests
 
@@ -59,15 +60,29 @@ class YTMDClient:
         self.host = host
         self.port = port
         self.token = token
+        # host/port/token are rewritten by the settings UI (main thread) while request
+        # threads read them - guard both sides so a request can't pick up a half-applied
+        # host/port/token triple.
+        self._lock = threading.Lock()
+
+    def configure(self, host: str, port: int, token: str | None) -> None:
+        """Apply a new host/port/token atomically. Called from the settings UI whenever any
+        of them change (including after pairing)."""
+        with self._lock:
+            self.host = host
+            self.port = port
+            self.token = token
 
     @property
     def base_url(self) -> str:
-        return f"http://{self.host}:{self.port}/api/v1"
+        with self._lock:
+            return f"http://{self.host}:{self.port}/api/v1"
 
     def _headers(self) -> dict:
-        if self.token:
-            return {"Authorization": self.token}
-        return {}
+        with self._lock:
+            if self.token:
+                return {"Authorization": self.token}
+            return {}
 
     def _request(self, method: str, path: str, timeout: float, **kwargs) -> requests.Response:
         try:
@@ -106,9 +121,6 @@ class YTMDClient:
         token = response.json()["token"]
         self.token = token
         return token
-
-    def get_state_once(self) -> dict:
-        return self._request("GET", "/state", REQUEST_TIMEOUT).json()
 
     def send_command(self, command: str, data=None) -> None:
         body = {"command": command}
