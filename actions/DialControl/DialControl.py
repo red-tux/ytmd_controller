@@ -158,7 +158,7 @@ class DialControl(YTMDActionMixin, DialAction):
         self._latest_state = state
 
         # Reads from the shared VolumeState (updated centrally in main.py before this fires)
-        # rather than raw `player.muted`/`player.volume`, so this always agrees with VolumeStep
+        # rather than raw `player.muted`/`player.volume`, so this always agrees with VolumeControl
         # and any other volume display.
         muted = self.plugin_base.volume_state.get_muted()
         muted_changed = muted != self._muted

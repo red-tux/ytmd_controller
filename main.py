@@ -23,7 +23,7 @@ from .settings_area import YTMDSettingsGroup
 # Import actions
 from .actions.PlayPause.PlayPause import PlayPause
 from .actions.TrackStep.TrackStep import TrackStep
-from .actions.VolumeStep.VolumeStep import VolumeStep
+from .actions.VolumeControl.VolumeControl import VolumeControl
 from .actions.DialControl.DialControl import DialControl
 from .actions.ShuffleRepeat.ShuffleRepeat import ShuffleRepeat
 from .actions.ThumbsRating.ThumbsRating import ThumbsRating
@@ -120,20 +120,23 @@ class YTMDControllerPlugin(PluginBase):
             ),
             ActionHolder(
                 plugin_base=self,
-                action_base=VolumeStep,
-                action_id_suffix="VolumeStep",
-                action_name="Volume Step",
+                action_base=VolumeControl,
+                action_id_suffix="VolumeControl",
+                action_name="Volume Control",
                 action_support=KEY_ONLY_SUPPORT,
                 description=(
-                    "Volume Up, Volume Down, and Mute Toggle are separately assignable via the "
-                    "Event Assigner (e.g. press = up, hold = down, on one key). 'Icon Display' "
-                    "picks whether this key shows both direction icons, or just one - place it "
-                    "twice for dedicated up/down keys. Shows the current volume % (or 'Muted'), "
-                    "shared with Dial Control so both always agree."
+                    "Volume Up, Volume Down, Mute Toggle and Set Volume are separately assignable "
+                    "via the Event Assigner (e.g. press = up, hold = down, on one key). Set Volume "
+                    "jumps straight to the level configured in 'Set Volume Level' (0-100); that row "
+                    "only appears while Set Volume is bound to a gesture. 'Icon Display' picks "
+                    "whether this key shows both direction icons, or just one - place it twice for "
+                    "dedicated up/down keys. Shows the current volume % (or 'Muted'), shared with "
+                    "Dial Control so both always agree."
                 ),
                 settings_schema={
                     "step": {"type": "int", "default": 10},
-                    "icon_display": {"type": "string", "values": ["both", "up", "down"], "default": "both"},
+                    "icon_display": {"type": "string", "values": ["both", "up", "down", "none"], "default": "both"},
+                    "set_volume_target": {"type": "int", "description": "Level the Set Volume function jumps to (0-100)", "default": 50},
                 },
             ),
             ActionHolder(

@@ -31,7 +31,7 @@ Album art (and other track art, like Track Step's upcoming-track preview) is cac
 |---|---|---|
 | **Play/Pause** | Key | Shows the current track's art and, optionally, title/artist labels and a progress bar. Press to toggle playback. |
 | **Track Step** | Key | Skip forward/back. Optionally previews the *upcoming* or *previous* track's art/title instead of the current one. |
-| **Volume Step** | Key | Nudge the volume up/down by a configurable amount. |
+| **Volume Control** | Key | Nudge the volume up/down by a configurable amount, or jump straight to a set level. |
 | **Dial Control** | Dial | An all-in-one dial: album art, an optional volume bar and progress bar, optional title/artist labels, and every function (play/pause, mute, next/previous, volume) bindable to any gesture. |
 | **Shuffle & Repeat** | Key | Toggle shuffle and control repeat mode, with a status icon. |
 | **Thumbs Up/Down** | Key | Like/dislike the current track, with a status icon. |
@@ -42,7 +42,7 @@ Add any of these the normal StreamController way — drag an empty key or dial's
 
 ## The Event Assigner
 
-Every action except Play/Pause exposes more than one function (e.g. Volume Step has *Volume Up* and *Volume Down*), and lets you decide which physical gesture triggers which one, instead of hard-coding one function per key. This is StreamController's own **Event Assigner** panel, in each action's configuration:
+Every action except Play/Pause exposes more than one function (e.g. Volume Control has *Volume Up* and *Volume Down*), and lets you decide which physical gesture triggers which one, instead of hard-coding one function per key. This is StreamController's own **Event Assigner** panel, in each action's configuration:
 
 ![The Event Assigner, showing gestures on the left and assignable functions on the right](docs/screenshots/event-assigner.png)
 
@@ -81,20 +81,26 @@ While paused, the art is dimmed with a pause icon overlaid - shared with Dial Co
 
 With Thumbnail Preview set, the key shows the art of the *adjacent* track from YTMD's queue instead of the currently-playing one — handy for a "here's what's coming up next" key. The labels follow whichever track is being shown (adjacent track while previewing, current track otherwise).
 
-### Volume Step
+### Volume Control
 
 | Function | Default gesture |
 |---|---|
 | Volume Up | Key Down |
 | Volume Down | Key Hold Start |
 | Mute Toggle | *(no default)* |
+| Set Volume | *(no default)* |
 
 | Setting | Values | Default |
 |---|---|---|
 | Step | 1–100 | 10 |
-| Icon Display | `both`, `up`, `down` | `both` |
+| Icon Display | `both`, `up`, `down`, `none` | `both` |
+| Set Volume Level | 0–100 | 50 |
 
-The current volume is also shown as a `NN%` label (or `Muted`, if muted from Dial Control or elsewhere - volume and mute status are shared across every action in this plugin, so they always agree). Set Icon Display to `up` or `down` (and remap the Event Assigner if you want) to make a pair of dedicated volume-up / volume-down keys instead of one key that does both.
+The current volume is also shown as a `NN%` label (or `Muted`, if muted from Dial Control or elsewhere - volume and mute status are shared across every action in this plugin, so they always agree). Set Icon Display to `up` or `down` (and remap the Event Assigner if you want) to make a pair of dedicated volume-up / volume-down keys instead of one key that does both, or `none` to drop the icon entirely and show only the volume label.
+
+**Set Volume** jumps straight to *Set Volume Level* when fired (bounded to the 0–100 range YTMD accepts). The *Set Volume Level* setting only appears once you've bound **Set Volume** to a gesture in the Event Assigner — bind it, and the row shows up; unbind it, and it hides again.
+
+> This action was called **Volume Step** before v1.0.0. If you had one placed on a key from an earlier version it will show as a missing action after updating — remove it and add **Volume Control** in its place.
 
 ### Dial Control
 
