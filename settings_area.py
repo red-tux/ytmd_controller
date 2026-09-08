@@ -47,10 +47,14 @@ class YTMDSettingsGroup(Adw.PreferencesGroup):
         self.app_id_row.connect("notify::text", self.on_app_id_changed)
         self.add(self.app_id_row)
 
-        self.status_label = Gtk.Label(label="")
-        status_row = Adw.ActionRow(title="Status")
-        status_row.add_suffix(self.status_label)
-        self.add(status_row)
+        # Status text goes in the row subtitle (not a suffix Gtk.Label) so a long
+        # pairing error wraps to multiple lines instead of forcing the whole
+        # settings dialog to overflow horizontally and hide the controls.
+        self.status_row = Adw.ActionRow(title="Status")
+        self.status_row.set_use_markup(False)
+        self.status_row.set_subtitle_lines(0)
+        self.status_row.set_subtitle_selectable(True)
+        self.add(self.status_row)
 
         self.pair_button = Gtk.Button(
             label="Pair with YTMD", valign=Gtk.Align.CENTER, css_classes=["suggested-action"]
@@ -127,11 +131,11 @@ class YTMDSettingsGroup(Adw.PreferencesGroup):
 
     def update_status_label(self) -> None:
         settings = self.plugin_base.get_settings()
-        self.status_label.set_label("Paired" if settings.get("token") else "Not paired")
+        self.status_row.set_subtitle("Paired" if settings.get("token") else "Not paired")
 
     def on_pair_clicked(self, button: Gtk.Button) -> None:
         button.set_sensitive(False)
-        self.status_label.set_label("Requesting pairing code…")
+        self.status_row.set_subtitle("Requesting pairing code…")
         threading.Thread(target=self._pair_thread, daemon=True).start()
 
     def _pair_thread(self) -> None:
@@ -142,7 +146,7 @@ class YTMDSettingsGroup(Adw.PreferencesGroup):
         client = YTMDClient(host, port)
         try:
             code = client.request_pair_code(app_id, DEFAULT_APP_NAME)
-            GLib.idle_add(self.status_label.set_label, f"Confirm code {code} in YTMD…")
+            GLib.idle_add(self.status_row.set_subtitle, f"Confirm code {code} in YTMD…")
             token = client.exchange_code(app_id, code)
         except YTMDError as e:
             GLib.idle_add(self._on_pair_failed, str(e))
@@ -153,10 +157,10 @@ class YTMDSettingsGroup(Adw.PreferencesGroup):
         settings = self.plugin_base.get_settings()
         settings["token"] = token
         self.plugin_base.set_settings(settings)
-        self.status_label.set_label("Paired")
+        self.status_row.set_subtitle("Paired")
         self.pair_button.set_sensitive(True)
         self.plugin_base.on_connection_settings_changed()
 
     def _on_pair_failed(self, error: str) -> None:
-        self.status_label.set_label(f"Pairing failed: {error}")
+        self.status_row.set_subtitle(f"Pairing failed: {error}")
         self.pair_button.set_sensitive(True)
