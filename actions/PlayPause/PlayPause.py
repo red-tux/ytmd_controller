@@ -2,12 +2,10 @@ import os
 
 from PIL import Image, ImageDraw
 
-from src.backend.PluginManager.InputBases import KeyAction
-
-from ..common.ytmd_action_base import YTMDActionMixin
+from ..common.ytmd_action_base import YTMDKeyAction
 
 
-class PlayPause(YTMDActionMixin, KeyAction):
+class PlayPause(YTMDKeyAction):
     def __init__(self, *args, **kwargs):
         super().__init__(*args, **kwargs)
         self.setup_label_rows(on_change=self._on_setting_changed)
@@ -25,7 +23,7 @@ class PlayPause(YTMDActionMixin, KeyAction):
         # setting the icon here again would just flash it over the real art.
         if self._art_image is None:
             icon_path = os.path.join(self.plugin_base.PATH, "assets", "info.png")
-            self.set_media(media_path=icon_path, size=0.75)
+            self.push_media(media_path=icon_path, size=0.75)
         else:
             # Revisit with art already cached - re-push it now (the core cleared the key
             # image just before this call) instead of waiting for the state replay.
@@ -95,7 +93,7 @@ class PlayPause(YTMDActionMixin, KeyAction):
 
         image = self.apply_pause_overlay(image)
 
-        self.ui(self.set_media, image=image, size=1.0)
+        self.push_media(image=image, size=1.0)
 
     def on_key_down(self, data=None) -> None:
         paused = not self.plugin_base.playback_state.is_paused()

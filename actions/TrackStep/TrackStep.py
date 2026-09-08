@@ -1,16 +1,15 @@
 import os
 
-from src.backend.PluginManager.InputBases import KeyAction
 from src.backend.PluginManager.EventAssigner import EventAssigner
 from src.backend.DeckManagement.InputIdentifier import Input
 from GtkHelper.GenerativeUI.ComboRow import ComboRow
 
-from ..common.ytmd_action_base import YTMDActionMixin
+from ..common.ytmd_action_base import YTMDKeyAction
 
 PREVIEW_CHOICES = ["none", "next", "previous"]
 
 
-class TrackStep(YTMDActionMixin, KeyAction):
+class TrackStep(YTMDKeyAction):
     """Next Track and Previous Track are separately assignable functions (Event Assigner), so
     one key can do both - e.g. short press = next, hold = previous - instead of needing one
     key per direction. Optionally previews the upcoming/previous track's art+title instead of
@@ -48,7 +47,7 @@ class TrackStep(YTMDActionMixin, KeyAction):
         # flash it. (With preview off, TrackStep only ever shows this icon anyway.)
         if self._last_preview_key is None:
             icon_path = os.path.join(self.plugin_base.PATH, "assets", "info.png")
-            self.set_media(media_path=icon_path, size=0.75)
+            self.push_media(media_path=icon_path, size=0.75)
         super().on_ready()
 
     def _on_preview_setting_changed(self, widget, new_value, old_value) -> None:
@@ -80,7 +79,7 @@ class TrackStep(YTMDActionMixin, KeyAction):
                 # Coming back from preview mode - the key image is still whatever track was
                 # last previewed, reset it to the static icon rather than leaving it stuck.
                 icon_path = os.path.join(self.plugin_base.PATH, "assets", "info.png")
-                self.ui(self.set_media, media_path=icon_path, size=0.75)
+                self.push_media(media_path=icon_path, size=0.75)
             return
 
         item = self._get_adjacent_queue_item(state, preview)
@@ -94,7 +93,7 @@ class TrackStep(YTMDActionMixin, KeyAction):
 
         if item is None:
             icon_path = os.path.join(self.plugin_base.PATH, "assets", "info.png")
-            self.ui(self.set_media, media_path=icon_path, size=0.75)
+            self.push_media(media_path=icon_path, size=0.75)
             return
 
         thumbnails = item.get("thumbnails") or []
@@ -108,7 +107,7 @@ class TrackStep(YTMDActionMixin, KeyAction):
             return
         width, height = self.get_display_size()
         image = image.resize((width, height)).convert("RGBA")
-        self.ui(self.set_media, image=image, size=1.0)
+        self.push_media(image=image, size=1.0)
 
     @staticmethod
     def _get_adjacent_queue_item(state: dict, direction: str) -> dict | None:

@@ -19,8 +19,13 @@ class StateStore:
         self._lock = threading.Lock()
         self._state: dict | None = None
         self._connected = False
+        # True until something proves the stored pairing token is rejected by YTMD
+        # (startup check, settings-dialog check, or a live 401). Actions watch this to
+        # replace their normal display with a "Check YTMD Settings" error.
+        self._auth_ok = True
         self._state_subscribers: dict[int, StateCallback] = {}
         self._connection_subscribers: dict[int, ConnectionCallback] = {}
+        self._auth_subscribers: dict[int, ConnectionCallback] = {}
         self._next_token = 1
 
     def update(self, state: dict) -> None:
@@ -43,6 +48,16 @@ class StateStore:
         for callback in subscribers:
             GLib.idle_add(callback, connected)
 
+    def set_auth_ok(self, ok: bool) -> None:
+        """Flip the token-valid flag and notify auth subscribers if it actually changed."""
+        with self._lock:
+            if ok == self._auth_ok:
+                return
+            self._auth_ok = ok
+            subscribers = list(self._auth_subscribers.values())
+        for callback in subscribers:
+            GLib.idle_add(callback, ok)
+
     def get_latest(self) -> dict | None:
         with self._lock:
             return self._state
@@ -50,6 +65,10 @@ class StateStore:
     def is_connected(self) -> bool:
         with self._lock:
             return self._connected
+
+    def is_auth_ok(self) -> bool:
+        with self._lock:
+            return self._auth_ok
 
     def subscribe_state(self, callback: StateCallback) -> int:
         with self._lock:
@@ -72,3 +91,14 @@ class StateStore:
     def unsubscribe_connection(self, token: int) -> None:
         with self._lock:
             self._connection_subscribers.pop(token, None)
+
+    def subscribe_auth(self, callback: ConnectionCallback) -> int:
+        with self._lock:
+            token = self._next_token
+            self._next_token += 1
+            self._auth_subscribers[token] = callback
+        return token
+
+    def unsubscribe_auth(self, token: int) -> None:
+        with self._lock:
+            self._auth_subscribers.pop(token, None)

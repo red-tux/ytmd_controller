@@ -1,6 +1,6 @@
 These icons (`shuffle`, `repeat`, `repeat_one`, `thumb_up`, `thumb_down`, `volume_up`,
-`volume_down`, `pause` - both the `.svg` sources and the `.png` renders of them) are from
-Google's Material Icons set:
+`volume_down`, `pause`, `report_problem` - both the `.svg` sources and the `.png` renders of
+them) are from Google's Material Icons set:
 
 https://github.com/google/material-design-icons
 

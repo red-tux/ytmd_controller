@@ -1,7 +1,8 @@
 """Shared plumbing for every YTMD action: subscribe/unsubscribe to live state, thumbnail fetch+cache.
 
-Mixed in ahead of KeyAction/DialAction, e.g. `class PlayPause(YTMDActionMixin, KeyAction): ...`
-Plain mixin (no __init__) so it doesn't disturb the KeyAction/DialAction/ActionCore MRO.
+`YTMDActionBase` carries the shared logic and no `__init__` (so it doesn't disturb the
+KeyAction/DialAction/ActionCore MRO); concrete actions subclass the input-type-specific
+`YTMDKeyAction` / `YTMDDialAction` below, e.g. `class PlayPause(YTMDKeyAction): ...`.
 """
 from typing import Callable
 
@@ -9,12 +10,15 @@ from loguru import logger as log
 from PIL import Image
 from gi.repository import GLib
 
+from src.backend.PluginManager.InputBases import KeyAction, DialAction
+
 from GtkHelper.GenerativeUI.ComboRow import ComboRow
 from GtkHelper.GenerativeUI.SwitchRow import SwitchRow
 from GtkHelper.GenerativeUI.SpinRow import SpinRow
 from GtkHelper.GenerativeUI.ColorButtonRow import ColorButtonRow
 
 from ...internal import profiling as _profiling
+from ...internal.ytmd_client import YTMDAuthError
 
 LABEL_CHOICES = ["none", "title", "artist"]
 DEFAULT_PROGRESS_COLOR = (255, 0, 0, 255)
@@ -37,6 +41,7 @@ ICON_THUMB_DOWN = "thumb_down_icon"
 ICON_VOLUME_UP = "volume_up_icon"
 ICON_VOLUME_DOWN = "volume_down_icon"
 ICON_PAUSE = "pause_icon"
+ICON_AUTH_ERROR = "auth_error_icon"
 
 COLOR_SHUFFLE = "shuffle_color"
 COLOR_REPEAT_ON = "repeat_on_color"
@@ -48,6 +53,13 @@ COLOR_VOLUME_UP = "volume_up_color"
 COLOR_VOLUME_DOWN = "volume_down_color"
 COLOR_PAUSE_ICON = "pause_icon_color"
 COLOR_PAUSE_DIM = "pause_dim_color"
+COLOR_AUTH_ERROR = "auth_error_color"
+
+# Shown on every YTMD action's input while YTMD is rejecting the stored pairing token.
+# Split across the top and bottom label slots so it stays legible on a single key, with the
+# error icon centered between them.
+AUTH_ERROR_TOP_LABEL = "Check YTMD"
+AUTH_ERROR_BOTTOM_LABEL = "Settings"
 
 # Filenames are relative to assets/icons/material/ (the plugin's bundled Material Icons - see
 # assets/icons/material/NOTICE.md for attribution). main.py registers these as the default
@@ -68,6 +80,7 @@ ICON_ASSET_DEFAULTS = {
     ICON_VOLUME_UP: "volume_up.png",
     ICON_VOLUME_DOWN: "volume_down.png",
     ICON_PAUSE: "pause.png",
+    ICON_AUTH_ERROR: "report_problem.png",
 }
 
 # main.py registers these as the default Color asset for each key above via PluginBase.add_color().
@@ -82,10 +95,11 @@ COLOR_ASSET_DEFAULTS = {
     COLOR_VOLUME_DOWN: (220, 53, 69, 255),
     COLOR_PAUSE_ICON: (255, 255, 255, 255),
     COLOR_PAUSE_DIM: (0, 0, 0, 140),
+    COLOR_AUTH_ERROR: (220, 53, 69, 255),
 }
 
 
-class YTMDActionMixin:
+class YTMDActionBase:
     # Per-action "last rendered X" bookkeeping that on_ytmd_state() uses to skip redundant
     # hardware writes. on_ready() is the framework's redraw entry point (on_update() calls
     # it) and runs again on every page (re)load - and the core clears the input's image
@@ -109,8 +123,18 @@ class YTMDActionMixin:
         # every page revisit. on_disconnect() nulls the token so a genuine teardown/re-ready
         # still re-subscribes.
         if getattr(self, "_state_token", None) is None:
-            self._state_token = self.plugin_base.state_store.subscribe_state(self.on_ytmd_state)
+            self._state_token = self.plugin_base.state_store.subscribe_state(self._handle_state)
+        if getattr(self, "_auth_token", None) is None:
+            self._auth_token = self.plugin_base.state_store.subscribe_auth(self._on_auth_changed)
         self._reset_render_cache()
+        # The core cleared this input's image just before on_ready(), so a repaint is owed
+        # regardless of what was on screen before - drop the "already drawn" guard.
+        self._showing_auth_error = False
+        if not self.plugin_base.state_store.is_auth_ok():
+            # Token is known-bad - show the error instead of the normal content, and don't
+            # replay the last state over it.
+            self._render_auth_error()
+            return
         latest = self.plugin_base.state_store.get_latest()
         if latest is not None:
             self.on_ytmd_state(latest)
@@ -120,12 +144,63 @@ class YTMDActionMixin:
         if token is not None:
             self.plugin_base.state_store.unsubscribe_state(token)
             self._state_token = None
+        auth_token = getattr(self, "_auth_token", None)
+        if auth_token is not None:
+            self.plugin_base.state_store.unsubscribe_auth(auth_token)
+            self._auth_token = None
+
+    def _handle_state(self, state: dict) -> None:
+        """StateStore subscription entry point. While the pairing token is being rejected,
+        _render_auth_error() owns the display - drop state updates so they don't paint over it."""
+        if not self.plugin_base.state_store.is_auth_ok():
+            return
+        self.on_ytmd_state(state)
+
+    def _on_auth_changed(self, ok: bool) -> None:
+        """Delivered on the main thread by StateStore when the token-valid flag flips."""
+        if not ok:
+            self._render_auth_error()
+            return
+        # Recovered (re-paired, or a later check succeeded) - clear the error and repaint
+        # from scratch. on_ready() is the framework's redraw path and is safe to re-enter.
+        self._clear_auth_error()
+        self.on_ready()
+
+    def _render_auth_error(self) -> None:
+        """Replace this input's display with the report_problem icon (tinted with the
+        auth_error color) and a 'Check YTMD Settings' label. Both are user-overridable via
+        this plugin's Settings > Assets / Colors tabs, like every other icon/color here."""
+        if getattr(self, "_showing_auth_error", False):
+            return
+        if not self.get_is_present():
+            return
+        self._showing_auth_error = True
+        width, height = self.get_display_size()
+        canvas = Image.new("RGBA", (width, height), (0, 0, 0, 0))
+        self.paste_asset_icon(
+            canvas, ICON_AUTH_ERROR, COLOR_AUTH_ERROR, (0, 0, width, height), margin_fraction=0.28
+        )
+        self.ui(self.set_media, image=canvas, size=1.0)
+        self.ui(self.set_top_label, AUTH_ERROR_TOP_LABEL)
+        self.ui(self.set_center_label, "")
+        self.ui(self.set_bottom_label, AUTH_ERROR_BOTTOM_LABEL)
+
+    def _clear_auth_error(self) -> None:
+        if not getattr(self, "_showing_auth_error", False):
+            return
+        self._showing_auth_error = False
+        # Blank the error labels; on_ready()'s repaint re-populates whichever labels the
+        # concrete action actually uses (label-less actions stay blank, as they should).
+        self.ui(self.set_top_label, "")
+        self.ui(self.set_center_label, "")
+        self.ui(self.set_bottom_label, "")
 
     def on_ytmd_state(self, state: dict) -> None:
         """Override in the concrete action. Always invoked on the GTK main thread - StateStore
         marshals its fan-out through GLib.idle_add and the on_ready() replay is already
-        main-thread - so the per-action bookkeeping here needs no locking. set_media()/
-        set_label() may be called directly; self.ui() stays harmless if used."""
+        main-thread - so the per-action bookkeeping here needs no locking. Push output through
+        self.push_media() / self.push_*_label() (never set_media/set_label directly) so the
+        auth-error overlay isn't painted over by a late repaint."""
 
     # EventAssigner always forwards whatever data the hardware callback produced (see
     # ActionCore._raw_event_callback -> EventAssigner.call(*args, **kwargs)), even when it's
@@ -168,6 +243,33 @@ class YTMDActionMixin:
         _profiling.incr("ui_push")
         GLib.idle_add(lambda: fn(*args, **kwargs))
 
+    # --- render arbitration ------------------------------------------------------
+    # Every action's normal rendering goes through these instead of set_media()/set_label()
+    # directly. While _render_auth_error() owns the display (_showing_auth_error), they no-op,
+    # so a late repaint from a setting-change / thumbnail / timer callback can't paint over
+    # the "Check YTMD Settings" error. _render_auth_error()/_clear_auth_error() deliberately
+    # bypass this via raw self.ui() - they *are* the arbiter.
+
+    def push_media(self, **kwargs) -> None:
+        if getattr(self, "_showing_auth_error", False):
+            return
+        self.ui(self.set_media, **kwargs)
+
+    def push_top_label(self, text: str) -> None:
+        if getattr(self, "_showing_auth_error", False):
+            return
+        self.ui(self.set_top_label, text)
+
+    def push_center_label(self, text: str) -> None:
+        if getattr(self, "_showing_auth_error", False):
+            return
+        self.ui(self.set_center_label, text)
+
+    def push_bottom_label(self, text: str) -> None:
+        if getattr(self, "_showing_auth_error", False):
+            return
+        self.ui(self.set_bottom_label, text)
+
     def get_display_size(self, fallback: tuple[int, int] = (200, 100)) -> tuple[int, int]:
         """The actual pixel size this action renders to (key or dial touchscreen slot).
 
@@ -188,6 +290,10 @@ class YTMDActionMixin:
         try:
             self.plugin_base.client.send_command(command, data)
             log.debug(f"{self.action_id} - Sent command {command!r} data={data!r}")
+            self.plugin_base.state_store.set_auth_ok(True)
+        except YTMDAuthError as e:
+            log.error(f"{self.action_id} - YTMD rejected command {command!r} (bad token): {e}")
+            self.plugin_base.state_store.set_auth_ok(False)
         except Exception as e:
             log.error(f"{self.action_id} - Failed to send command {command!r} data={data!r}: {e}")
 
@@ -197,7 +303,7 @@ class YTMDActionMixin:
 
     @staticmethod
     def format_title_artist(state: dict) -> tuple[str, str]:
-        video = YTMDActionMixin.get_video(state)
+        video = YTMDActionBase.get_video(state)
         return video.get("title", ""), video.get("author", "")
 
     @staticmethod
@@ -205,11 +311,11 @@ class YTMDActionMixin:
         """YTMD's actual YouTube video ID - a real stable identifier for the track, unlike the
         thumbnail URL (which is only meant for fetching the image, not for identifying which
         track it belongs to). Use this for track-change detection and as the cache key."""
-        return YTMDActionMixin.get_video(state).get("id")
+        return YTMDActionBase.get_video(state).get("id")
 
     @staticmethod
     def progress_fraction(state: dict) -> float:
-        video = YTMDActionMixin.get_video(state)
+        video = YTMDActionBase.get_video(state)
         duration = video.get("durationSeconds") or 0
         if not duration:
             return 0.0
@@ -254,9 +360,9 @@ class YTMDActionMixin:
 
         top, middle, bottom = labels
         log.info(f"{self.action_id} - rendering labels top={top!r} middle={middle!r} bottom={bottom!r}")
-        self.ui(self.set_top_label, top)
-        self.ui(self.set_center_label, middle)
-        self.ui(self.set_bottom_label, bottom)
+        self.push_top_label(top)
+        self.push_center_label(middle)
+        self.push_bottom_label(bottom)
 
     # --- shared settings: progress bar --------------------------------------------
 
@@ -355,7 +461,7 @@ class YTMDActionMixin:
     @staticmethod
     def thumbnail_url(state: dict) -> str | None:
         """Cheap, I/O-free lookup - safe to call on every state-update for change detection."""
-        thumbnails = YTMDActionMixin.get_video(state).get("thumbnails") or []
+        thumbnails = YTMDActionBase.get_video(state).get("thumbnails") or []
         if not thumbnails:
             return None
         return max(thumbnails, key=lambda t: t.get("width", 0))["url"]
@@ -373,3 +479,16 @@ class YTMDActionMixin:
             callback(None)
             return
         self.plugin_base.thumbnail_cache.request(key, url, callback)
+
+
+# Concrete actions subclass one of these (not YTMDActionBase directly), so the shared YTMD
+# plumbing and the input-type core base are bound together in one place. YTMDActionBase must
+# come first: its on_ready/on_disconnect/on_key_*/on_dial_* overrides need to win over
+# KeyAction/DialAction. Neither of these defines __init__, so a concrete action's
+# super().__init__(...) still lands on KeyAction/DialAction exactly as before.
+class YTMDKeyAction(YTMDActionBase, KeyAction):
+    pass
+
+
+class YTMDDialAction(YTMDActionBase, DialAction):
+    pass

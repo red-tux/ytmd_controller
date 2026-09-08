@@ -13,6 +13,7 @@ from gi.repository import Gtk, Adw, GLib
 from .internal.ytmd_client import (
     YTMDClient,
     YTMDError,
+    YTMDAuthError,
     DEFAULT_HOST,
     DEFAULT_PORT,
     DEFAULT_APP_NAME,
@@ -131,7 +132,25 @@ class YTMDSettingsGroup(Adw.PreferencesGroup):
 
     def update_status_label(self) -> None:
         settings = self.plugin_base.get_settings()
-        self.status_row.set_subtitle("Paired" if settings.get("token") else "Not paired")
+        if not settings.get("token"):
+            self.status_row.set_subtitle("Not paired")
+            return
+        # A token string in settings doesn't mean YTMD still accepts it - probe it.
+        self.status_row.set_subtitle("Paired · checking token…")
+        threading.Thread(target=self._verify_token_thread, daemon=True).start()
+
+    def _verify_token_thread(self) -> None:
+        try:
+            self.plugin_base.client.check_auth()
+        except YTMDAuthError:
+            self.plugin_base.state_store.set_auth_ok(False)
+            GLib.idle_add(self.status_row.set_subtitle, "Paired · token rejected — re-pair below")
+            return
+        except YTMDError:
+            GLib.idle_add(self.status_row.set_subtitle, "Paired · couldn't reach YTMD to verify token")
+            return
+        self.plugin_base.state_store.set_auth_ok(True)
+        GLib.idle_add(self.status_row.set_subtitle, "Paired · token valid")
 
     def on_pair_clicked(self, button: Gtk.Button) -> None:
         button.set_sensitive(False)
@@ -157,6 +176,7 @@ class YTMDSettingsGroup(Adw.PreferencesGroup):
         settings = self.plugin_base.get_settings()
         settings["token"] = token
         self.plugin_base.set_settings(settings)
+        self.plugin_base.state_store.set_auth_ok(True)
         self.status_row.set_subtitle("Paired")
         self.pair_button.set_sensitive(True)
         self.plugin_base.on_connection_settings_changed()

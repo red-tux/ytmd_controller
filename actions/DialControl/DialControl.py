@@ -2,7 +2,6 @@ import threading
 
 from PIL import Image, ImageDraw
 
-from src.backend.PluginManager.InputBases import DialAction
 from src.backend.PluginManager.EventAssigner import EventAssigner
 from src.backend.DeckManagement.InputIdentifier import Input
 from GtkHelper.GenerativeUI.ComboRow import ComboRow
@@ -11,7 +10,7 @@ from GtkHelper.GenerativeUI.ColorButtonRow import ColorButtonRow
 from GtkHelper.GenerativeUI.SwitchRow import SwitchRow
 
 from ..common.ytmd_action_base import (
-    YTMDActionMixin,
+    YTMDDialAction,
     ICON_THUMB_UP, ICON_THUMB_DOWN,
     COLOR_LIKE, COLOR_DISLIKE, COLOR_NEUTRAL,
 )
@@ -36,7 +35,7 @@ LIKE_DISLIKE = 0
 LIKE_LIKE = 2
 
 
-class DialControl(YTMDActionMixin, DialAction):
+class DialControl(YTMDDialAction):
     """A single dial action exposing every YTMD function as an assignable event, so any
     physical gesture (press, hold, touchscreen tap, turn) can be bound to any function via
     the Event Assigner UI - e.g. knob press -> Play/Pause, screen press -> Mute."""
@@ -423,4 +422,4 @@ class DialControl(YTMDActionMixin, DialAction):
 
         image = Image.alpha_composite(image, overlay)
         image = self.apply_pause_overlay(image)
-        self.ui(self.set_media, image=image, size=1.0)
+        self.push_media(image=image, size=1.0)

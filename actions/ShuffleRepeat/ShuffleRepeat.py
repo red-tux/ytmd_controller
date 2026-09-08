@@ -1,11 +1,10 @@
 from PIL import Image
 
-from src.backend.PluginManager.InputBases import KeyAction
 from src.backend.PluginManager.EventAssigner import EventAssigner
 from src.backend.DeckManagement.InputIdentifier import Input
 
 from ..common.ytmd_action_base import (
-    YTMDActionMixin,
+    YTMDKeyAction,
     ICON_SHUFFLE, ICON_REPEAT, ICON_REPEAT_ONE,
     COLOR_SHUFFLE, COLOR_REPEAT_ON, COLOR_REPEAT_OFF,
 )
@@ -18,7 +17,7 @@ REPEAT_ONE = 2
 REPEAT_SEQUENCE = [REPEAT_NONE, REPEAT_ALL, REPEAT_ONE]
 
 
-class ShuffleRepeat(YTMDActionMixin, KeyAction):
+class ShuffleRepeat(YTMDKeyAction):
     """Toggle Shuffle, Repeat On/Single/Off, and Cycle Repeat are separately assignable
     (Event Assigner) - assign a specific repeat function to a gesture for direct control,
     or Cycle Repeat to step through Off -> All -> One -> Off on a single gesture.
@@ -92,4 +91,4 @@ class ShuffleRepeat(YTMDActionMixin, KeyAction):
         repeat_icon_key = ICON_REPEAT_ONE if repeat_mode == REPEAT_ONE else ICON_REPEAT
         self.paste_asset_icon(image, repeat_icon_key, repeat_color_key, (0, half, width, height))
 
-        self.ui(self.set_media, image=image, size=1.0)
+        self.push_media(image=image, size=1.0)

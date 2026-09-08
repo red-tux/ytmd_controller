@@ -1,12 +1,11 @@
 from PIL import Image
 
-from src.backend.PluginManager.InputBases import KeyAction
 from src.backend.PluginManager.EventAssigner import EventAssigner
 from src.backend.DeckManagement.InputIdentifier import Input
 from GtkHelper.GenerativeUI.ComboRow import ComboRow
 
 from ..common.ytmd_action_base import (
-    YTMDActionMixin,
+    YTMDKeyAction,
     ICON_THUMB_UP, ICON_THUMB_DOWN,
     COLOR_LIKE, COLOR_DISLIKE, COLOR_NEUTRAL,
 )
@@ -20,7 +19,7 @@ LIKE_LIKE = 2
 ICON_CHOICES = ["both", "up", "down"]
 
 
-class ThumbsRating(YTMDActionMixin, KeyAction):
+class ThumbsRating(YTMDKeyAction):
     """Like and Dislike are separately assignable (Event Assigner) - e.g. press = like, hold
     = dislike, on one key. Unlike shuffle, YTMD does report the current like status, so these
     are real set-to-this-state functions (only toggling if not already in that state, since
@@ -106,4 +105,4 @@ class ThumbsRating(YTMDActionMixin, KeyAction):
         else:
             self.paste_asset_icon(image, ICON_THUMB_DOWN, down_color_key, (0, 0, width, height))
 
-        self.ui(self.set_media, image=image, size=1.0)
+        self.push_media(image=image, size=1.0)

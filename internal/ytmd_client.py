@@ -122,6 +122,14 @@ class YTMDClient:
         self.token = token
         return token
 
+    def check_auth(self) -> None:
+        """Probe whether the configured token is currently accepted by YTMD.
+
+        Returns normally if the token works, raises YTMDAuthError if YTMD rejects it
+        (missing/invalid/expired), or YTMDConnectionError if YTMD can't be reached.
+        GET /state is authenticated and side-effect free, so it doubles as a token test."""
+        self._request("GET", "/state", REQUEST_TIMEOUT)
+
     def send_command(self, command: str, data=None) -> None:
         body = {"command": command}
         if data is not None:

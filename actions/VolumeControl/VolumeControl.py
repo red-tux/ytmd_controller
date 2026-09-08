@@ -2,14 +2,13 @@ import time
 
 from PIL import Image
 
-from src.backend.PluginManager.InputBases import KeyAction
 from src.backend.PluginManager.EventAssigner import EventAssigner
 from src.backend.DeckManagement.InputIdentifier import Input
 from GtkHelper.GenerativeUI.SpinRow import SpinRow
 from GtkHelper.GenerativeUI.ComboRow import ComboRow
 
 from ..common.ytmd_action_base import (
-    YTMDActionMixin,
+    YTMDKeyAction,
     ICON_VOLUME_UP, ICON_VOLUME_DOWN,
     COLOR_VOLUME_UP, COLOR_VOLUME_DOWN,
 )
@@ -33,7 +32,7 @@ LOCAL_GRACE_SECONDS = 0.5
 SET_VOLUME_ID = "Set Volume"
 
 
-class VolumeControl(YTMDActionMixin, KeyAction):
+class VolumeControl(YTMDKeyAction):
     """Volume Up, Volume Down, Mute Toggle and Set Volume are separately assignable functions
     (Event Assigner), so one key can do several - e.g. short press = up, hold = down. 'Icon
     Display' picks whether this key shows both direction icons, or just one - place it twice
@@ -128,7 +127,7 @@ class VolumeControl(YTMDActionMixin, KeyAction):
         if (volume, muted) == self._last_displayed:
             return
         self._last_displayed = (volume, muted)
-        self.ui(self.set_center_label, "Muted" if muted else f"{volume}%")
+        self.push_center_label("Muted" if muted else f"{volume}%")
 
     def _do_volume_up(self, data=None) -> None:
         self._step_volume(int(self.step_row.get_value(fallback=10)))
@@ -176,4 +175,4 @@ class VolumeControl(YTMDActionMixin, KeyAction):
             self.paste_asset_icon(image, ICON_VOLUME_DOWN, COLOR_VOLUME_DOWN, (0, 0, width, height))
         # mode == "none": leave the image fully transparent - just the volume % label shows
 
-        self.ui(self.set_media, image=image, size=1.0)
+        self.push_media(image=image, size=1.0)

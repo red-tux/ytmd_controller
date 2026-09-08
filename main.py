@@ -12,7 +12,7 @@ import threading
 from loguru import logger as log
 
 # Import plugin internals
-from .internal.ytmd_client import YTMDClient, DEFAULT_HOST, DEFAULT_PORT
+from .internal.ytmd_client import YTMDClient, YTMDError, YTMDAuthError, DEFAULT_HOST, DEFAULT_PORT
 from .internal.state_store import StateStore
 from .internal.thumbnail_cache import ThumbnailCache, DEFAULT_MAX_ENTRIES as DEFAULT_THUMBNAIL_CACHE_ENTRIES
 from .internal.volume_state import VolumeState
@@ -217,10 +217,32 @@ class YTMDControllerPlugin(PluginBase):
         return YTMDSettingsGroup(self)
 
     def _launch_backend(self) -> None:
+        self._verify_token()
         self.launch_backend(
             backend_path=os.path.join(self.PATH, "backend", "backend.py"),
             venv_path=os.path.join(self.PATH, ".venv"),
         )
+
+    def _verify_token(self) -> None:
+        """Startup sanity check: is the stored pairing token still accepted by YTMD?
+
+        Runs on the backend-launch thread (never the UI thread - it does blocking HTTP).
+        Purely advisory: it only logs. A rejected token still needs the user to re-pair
+        in the plugin settings; a stale/expired one otherwise only shows up as the
+        realtime socket silently failing to connect."""
+        if not self.get_settings().get("token"):
+            log.info("YTMD: no pairing token stored yet - pair in the plugin settings")
+            return
+        try:
+            self.client.check_auth()
+            log.info("YTMD: stored pairing token verified OK")
+            self.state_store.set_auth_ok(True)
+        except YTMDAuthError:
+            log.warning("YTMD: stored pairing token was rejected (invalid or expired) - re-pair in the plugin settings")
+            self.state_store.set_auth_ok(False)
+        except YTMDError as e:
+            # Can't reach YTMD - that's not proof the token is bad, so leave the flag alone.
+            log.info(f"YTMD: could not verify pairing token (YTMD not reachable?): {e}")
 
     def register_backend(self, port: int) -> None:
         super().register_backend(port)
